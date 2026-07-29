@@ -48,12 +48,12 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 // Standalone verification for the Minecraft-independent halo collision solver.
-// HaloSolver has no MC dependencies, so we compile just it plus the test and run it.
+// HaloPhysics has no MC dependencies, so we compile just it plus the test and run it.
 def haloTestOut = layout.buildDirectory.dir("halo-test")
 tasks.register("haloTestCompile", JavaCompile) {
 	source = files(
-		"src/client/java/com/hongshaoluobotou/client/HaloSolver.java",
-		"src/test/java/com/hongshaoluobotou/client/HaloSolverTest.java"
+		"src/client/java/com/hongshaoluobotou/client/HaloPhysics.java",
+		"src/test/java/com/hongshaoluobotou/client/HaloPhysicsTest.java"
 	)
 	classpath = files()
 	destinationDirectory = haloTestOut
@@ -64,10 +64,10 @@ tasks.register("haloTestCompile", JavaCompile) {
 
 tasks.register("haloTest", JavaExec) {
 	group = "verification"
-	description = "Runs the standalone HaloSolver collision-avoidance scenarios."
+	description = "Runs the standalone HaloPhysics collision-avoidance scenarios."
 	dependsOn "haloTestCompile"
 	classpath = files(haloTestOut)
-	mainClass = "com.hongshaoluobotou.client.HaloSolverTest"
+	mainClass = "com.hongshaoluobotou.client.HaloPhysicsTest"
 }
 
 tasks.named("check") {

@@ -3,9 +3,11 @@ package com.hongshaoluobotou.client;
 import com.hongshaoluobotou.EndRingItem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
-import java.util.Map;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -18,6 +20,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 public final class HaloRenderer {
 	private static final int FULL_BRIGHT = 0xF000F0;
@@ -25,26 +28,9 @@ public final class HaloRenderer {
 	private static final float MODEL_SCALE = 1.15F;
 	private static final float SPIN_SPEED = 2.2F;
 
-	private static final float LEAN_FACTOR = 0.9F;
-	private static final float MAX_TILT = 60.0F;
-	private static final float SPRING = 0.18F;
-	private static final float DAMPING = 0.82F;
+	// how far around the player to snapshot solid collision boxes for the physics worker
+	private static final double SNAPSHOT_PAD = 6.0;
 
-	private static final float SHIFT_FACTOR = 0.006F;
-	private static final float MAX_SHIFT = 0.35F;
-	private static final float SHIFT_SPRING = 0.18F;
-	private static final float SHIFT_DAMPING = 0.82F;
-
-	private static final float PITCH_DROP_FACTOR = 0.0045F;
-	private static final float MAX_PITCH_DROP = 0.35F;
-
-	// horizontal-only positional inertia (front/back/left/right); no vertical fling
-	private static final float POS_INERTIA = 6.0F;
-	private static final float POS_SPRING = 0.16F;
-	private static final float POS_DAMPING = 0.80F;
-	private static final float MAX_LAG = 0.45F;
-
-	// --- collision-aware placement ---
 	// real model extents are measured from the baked model; these are fallbacks until known.
 	private static final double DEFAULT_R = 0.5;
 	private static final double DEFAULT_T = 0.06;
@@ -53,30 +39,58 @@ public final class HaloRenderer {
 	private static volatile double modelT = DEFAULT_T;
 	private static volatile boolean modelMeasured = false;
 
-	private static final Map<UUID, Halo> HALOS = new HashMap<>();
+	// decorative spin is the only render-thread animation state we still keep per halo.
+	private static final java.util.Map<UUID, float[]> SPIN = new java.util.HashMap<>();
 
 	private HaloRenderer() {
 	}
 
 	public static void tick(ClientLevel level) {
 		Minecraft mc = Minecraft.getInstance();
+		Set<UUID> live = new HashSet<>();
 		for (AbstractClientPlayer player : level.players()) {
 			ItemStack ring = EndRingItem.getWorn(player);
 			if (ring.isEmpty()) {
-				HALOS.remove(player.getUUID());
+				HaloScheduler.remove(player.getUUID());
+				SPIN.remove(player.getUUID());
 				continue;
 			}
 			measureModel(mc, player, ring);
-			HALOS.computeIfAbsent(player.getUUID(), id -> new Halo()).update(player, level);
+			live.add(player.getUUID());
+			submitSnapshot(mc, level, player);
 		}
-
-		Iterator<UUID> it = HALOS.keySet().iterator();
+		// drop halos whose players left or unequipped
+		Iterator<UUID> it = SPIN.keySet().iterator();
 		while (it.hasNext()) {
 			UUID id = it.next();
-			if (level.getPlayerByUUID(id) == null) {
+			if (!live.contains(id)) {
 				it.remove();
+				HaloScheduler.remove(id);
 			}
 		}
+	}
+
+	// build the immutable physics input snapshot on the client thread (world reads must be here)
+	// and hand it to the async scheduler.
+	private static void submitSnapshot(Minecraft mc, ClientLevel level, AbstractClientPlayer player) {
+		double px = player.getX();
+		double py = player.getY();
+		double pz = player.getZ();
+		double bb = player.getBbHeight();
+		double homeOffY = bb + BASE_HEIGHT;
+
+		AABB region = new AABB(px - SNAPSHOT_PAD, py - SNAPSHOT_PAD, pz - SNAPSHOT_PAD,
+			px + SNAPSHOT_PAD, py + bb + SNAPSHOT_PAD, pz + SNAPSHOT_PAD);
+		List<HaloPhysics.Box> world = new ArrayList<>();
+		for (VoxelShape shape : level.getBlockCollisions(player, region)) {
+			for (AABB a : shape.toAabbs()) {
+				world.add(new HaloPhysics.Box(a.minX, a.minY, a.minZ, a.maxX, a.maxY, a.maxZ));
+			}
+		}
+
+		HaloPhysics.Input input = new HaloPhysics.Input(px, py, pz, bb, player.yBodyRot,
+			homeOffY, player.getYHeadRot(), player.getXRot(), world);
+		HaloScheduler.submit(player.getUUID(), modelR, modelT, input);
 	}
 
 	// measure the real baked-model size once, then derive the halo's world collision extents.
@@ -102,7 +116,7 @@ public final class HaloRenderer {
 	public static void renderAll(PoseStack poseStack, SubmitNodeCollector collector) {
 		Minecraft mc = Minecraft.getInstance();
 		ClientLevel level = mc.level;
-		if (level == null || HALOS.isEmpty()) {
+		if (level == null) {
 			return;
 		}
 
@@ -113,8 +127,9 @@ public final class HaloRenderer {
 		float partialTick = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
 
 		for (AbstractClientPlayer player : level.players()) {
-			Halo halo = HALOS.get(player.getUUID());
-			if (halo == null || player.isInvisible() || EndRingItem.getWorn(player).isEmpty()) {
+			UUID id = player.getUUID();
+			HaloScheduler.Frame frame = HaloScheduler.frame(id);
+			if (frame == null || player.isInvisible() || EndRingItem.getWorn(player).isEmpty()) {
 				continue;
 			}
 
@@ -124,158 +139,44 @@ public final class HaloRenderer {
 				continue;
 			}
 
+			HaloPhysics.State prev = frame.prev();
+			HaloPhysics.State cur = frame.cur();
+			double ax = Mth.lerp(partialTick, prev.x(), cur.x());
+			double ay = Mth.lerp(partialTick, prev.y(), cur.y());
+			double az = Mth.lerp(partialTick, prev.z(), cur.z());
+			float tiltX = (float) Mth.lerp(partialTick, prev.tiltX(), cur.tiltX());
+			float tiltZ = (float) Mth.lerp(partialTick, prev.tiltZ(), cur.tiltZ());
+
+			float[] spinState = SPIN.computeIfAbsent(id, k -> new float[]{0F, 0F});
+			float spin = Mth.lerp(partialTick, spinState[1], spinState[0]);
+
 			double px = Mth.lerp(partialTick, player.xOld, player.getX()) - camX;
 			double py = Mth.lerp(partialTick, player.yOld, player.getY()) - camY;
 			double pz = Mth.lerp(partialTick, player.zOld, player.getZ()) - camZ;
 
-			float tiltX = Mth.lerp(partialTick, halo.prevTiltX, halo.tiltX);
-			float tiltZ = Mth.lerp(partialTick, halo.prevTiltZ, halo.tiltZ);
-			float shiftX = Mth.lerp(partialTick, halo.prevShiftX, halo.shiftX);
-			float shiftZ = Mth.lerp(partialTick, halo.prevShiftZ, halo.shiftZ);
-			float spin = Mth.lerp(partialTick, halo.prevSpin, halo.spin);
-			float lagX = Mth.lerp(partialTick, halo.prevLagX, halo.lagX);
-			float lagZ = Mth.lerp(partialTick, halo.prevLagZ, halo.lagZ);
-			float solveTiltX = Mth.lerp(partialTick, halo.prevSolveTiltX, halo.solveTiltX);
-			float solveTiltZ = Mth.lerp(partialTick, halo.prevSolveTiltZ, halo.solveTiltZ);
-			double ax = Mth.lerp(partialTick, halo.prevAx, halo.ax);
-			double ay = Mth.lerp(partialTick, halo.prevAy, halo.ay);
-			double az = Mth.lerp(partialTick, halo.prevAz, halo.az);
-
-			// head-look shift/tilt only apply while the halo still sits above the head; fade with height
-			float headRef = player.getBbHeight() + BASE_HEIGHT;
-			float aboveHead = Mth.clamp(((float) ay - headRef * 0.5F) / (headRef * 0.5F), 0.0F, 1.0F);
-
 			poseStack.pushPose();
-			poseStack.translate(px + ax + lagX + shiftX * aboveHead, py + ay, pz + az + lagZ + shiftZ * aboveHead);
-			poseStack.mulPose(Axis.XP.rotationDegrees(tiltX * aboveHead + solveTiltX));
-			poseStack.mulPose(Axis.ZP.rotationDegrees(tiltZ * aboveHead + solveTiltZ));
+			poseStack.translate(px + ax, py + ay, pz + az);
+			poseStack.mulPose(Axis.XP.rotationDegrees(tiltX));
+			poseStack.mulPose(Axis.ZP.rotationDegrees(tiltZ));
 			poseStack.mulPose(Axis.YP.rotationDegrees(spin));
 			poseStack.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
 			poseStack.translate(0.0, -0.5, 0.0);
 			renderState.submit(poseStack, collector, FULL_BRIGHT, OverlayTexture.NO_OVERLAY, 0);
 			poseStack.popPose();
 		}
+
+		advanceSpin();
 	}
 
-	private static final class Halo {
-		float tiltX, tiltZ, prevTiltX, prevTiltZ, velX, velZ;
-		float shiftX, shiftZ, prevShiftX, prevShiftZ, shiftVelX, shiftVelZ;
-		float headYaw, prevHeadYaw;
-		float pitchDrop;
-		float spin, prevSpin;
-		double ax, ay, az, prevAx, prevAy, prevAz;
-		float solveTiltX, solveTiltZ, prevSolveTiltX, prevSolveTiltZ;
-		float lagX, lagZ, prevLagX, prevLagZ, lagVelX, lagVelZ;
-		double lastX, lastZ, lastVelX, lastVelZ;
-		boolean initialized;
-
-		void update(AbstractClientPlayer player, ClientLevel level) {
-			prevTiltX = tiltX;
-			prevTiltZ = tiltZ;
-			prevShiftX = shiftX;
-			prevShiftZ = shiftZ;
-			prevHeadYaw = headYaw;
-			prevSpin = spin;
-			prevAx = ax;
-			prevAy = ay;
-			prevAz = az;
-			prevLagX = lagX;
-			prevLagZ = lagZ;
-			prevSolveTiltX = solveTiltX;
-			prevSolveTiltZ = solveTiltZ;
-
-			spin += SPIN_SPEED;
-			if (spin >= 360.0F) {
-				spin -= 360.0F;
-				prevSpin -= 360.0F;
+	// decorative spin advances once per frame; kept lock-free and render-thread-local.
+	private static void advanceSpin() {
+		for (float[] s : SPIN.values()) {
+			s[1] = s[0];
+			s[0] += SPIN_SPEED;
+			if (s[0] >= 360.0F) {
+				s[0] -= 360.0F;
+				s[1] -= 360.0F;
 			}
-
-			double px = player.getX();
-			double py = player.getY();
-			double pz = player.getZ();
-			double homeY = player.getBbHeight() + BASE_HEIGHT;
-			if (!initialized) {
-				lastX = px;
-				lastZ = pz;
-				ax = 0;
-				ay = homeY;
-				az = 0;
-				prevAx = ax;
-				prevAy = ay;
-				prevAz = az;
-				initialized = true;
-			}
-
-			double moveX = px - lastX;
-			double moveZ = pz - lastZ;
-			double accX = moveX - lastVelX;
-			double accZ = moveZ - lastVelZ;
-			lastX = px;
-			lastZ = pz;
-			lastVelX = moveX;
-			lastVelZ = moveZ;
-
-			float rawYaw = player.getYHeadRot();
-			headYaw += Mth.wrapDegrees(rawYaw - headYaw) * 0.25F;
-			if (headYaw >= 360.0F) {
-				headYaw -= 360.0F;
-				prevHeadYaw -= 360.0F;
-			} else if (headYaw <= -360.0F) {
-				headYaw += 360.0F;
-				prevHeadYaw += 360.0F;
-			}
-
-			float yaw = headYaw * Mth.DEG_TO_RAD;
-			float pitch = player.getXRot();
-
-			float lean = Mth.clamp(pitch * LEAN_FACTOR, -MAX_TILT, MAX_TILT);
-			float targetTiltX = Mth.cos(yaw) * lean;
-			float targetTiltZ = Mth.sin(yaw) * lean;
-			velX += (targetTiltX - tiltX) * SPRING;
-			velZ += (targetTiltZ - tiltZ) * SPRING;
-			velX *= DAMPING;
-			velZ *= DAMPING;
-			tiltX = Mth.clamp(tiltX + velX, -MAX_TILT, MAX_TILT);
-			tiltZ = Mth.clamp(tiltZ + velZ, -MAX_TILT, MAX_TILT);
-
-			float shift = Mth.clamp(pitch * SHIFT_FACTOR, -MAX_SHIFT, MAX_SHIFT);
-			float targetShiftX = -Mth.sin(yaw) * shift;
-			float targetShiftZ = Mth.cos(yaw) * shift;
-			shiftVelX += (targetShiftX - shiftX) * SHIFT_SPRING;
-			shiftVelZ += (targetShiftZ - shiftZ) * SHIFT_SPRING;
-			shiftVelX *= SHIFT_DAMPING;
-			shiftVelZ *= SHIFT_DAMPING;
-			shiftX = Mth.clamp(shiftX + shiftVelX, -MAX_SHIFT, MAX_SHIFT);
-			shiftZ = Mth.clamp(shiftZ + shiftVelZ, -MAX_SHIFT, MAX_SHIFT);
-
-			lagVelX += (float) (-accX * POS_INERTIA);
-			lagVelZ += (float) (-accZ * POS_INERTIA);
-			lagVelX += -lagX * POS_SPRING;
-			lagVelZ += -lagZ * POS_SPRING;
-			lagVelX *= POS_DAMPING;
-			lagVelZ *= POS_DAMPING;
-			lagX = Mth.clamp(lagX + lagVelX, -MAX_LAG, MAX_LAG);
-			lagZ = Mth.clamp(lagZ + lagVelZ, -MAX_LAG, MAX_LAG);
-
-			float targetDrop = Mth.clamp(Math.abs(pitch) * PITCH_DROP_FACTOR, 0.0F, MAX_PITCH_DROP);
-			pitchDrop += (targetDrop - pitchDrop) * SHIFT_SPRING;
-
-			// ideal (home) local offset above the head
-			double homeOffY = homeY - pitchDrop;
-
-			// delegate collision-aware placement to the pure solver.
-			// only world collision blocks the ring; overlapping the player's own body is fine
-			// (the ring encircles the torso) and is handled as a soft penalty inside the solver.
-			HaloSolver.FreeTest freeTest = box -> level.noCollision(player,
-					new AABB(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()));
-			HaloSolver solver = new HaloSolver(px, py, pz, player.getBbHeight(), player.yBodyRot,
-					modelR, modelT, ax, ay, az, solveTiltX, solveTiltZ, moveX, moveZ, freeTest);
-			double[] moved = solver.solve(homeOffY);
-			ax = moved[0];
-			ay = moved[1];
-			az = moved[2];
-			solveTiltX = (float) moved[3];
-			solveTiltZ = (float) moved[4];
 		}
 	}
 }

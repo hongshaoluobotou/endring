@@ -4,7 +4,7 @@ Fabric mod ("终末之环" / End Ring) for Minecraft 26.2. Single Gradle project
 
 ## Build & verify
 - `./gradlew build` — compiles both source sets, runs data-gen, and validates mixins. This is the CI check (`.github/workflows/build.yml`); run it before finishing.
-- `./gradlew haloTest` — runs the standalone `HaloSolver` collision-avoidance scenarios (pure Java, no MC/JUnit; source in `src/test`). Wired into `check`.
+- `./gradlew haloTest` — runs the standalone `HaloPhysics` collision-avoidance scenarios (pure Java, no MC/JUnit; source in `src/test`). Wired into `check`.
 - `./gradlew runClient` / `./gradlew runServer` — launch dev instances.
 - Requires **JDK 25** (`sourceCompatibility`/`release = 25`). Older JDKs will not compile.
 - Bump versions in `gradle.properties` (`minecraft_version`, `loader_version`, `fabric_api_version`), not in `build.gradle`.
