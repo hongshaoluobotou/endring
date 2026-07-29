@@ -1,0 +1,35 @@
+{
+	"schemaVersion": 1,
+	"id": "endring",
+	"version": "${version}",
+	"name": "终末之环",
+	"description": "A ring that grants unlimited armor, totem storage, and a dramatic dragon death.",
+	"authors": [
+		"hongshaoluobotou"
+	],
+	"contact": {},
+	"license": "CC0-1.0",
+	"icon": "assets/endring/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.hongshaoluobotou.EndRing"
+		],
+		"client": [
+			"com.hongshaoluobotou.client.EndRingClient"
+		]
+	},
+	"mixins": [
+		"endring.mixins.json",
+		{
+			"config": "endring.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
