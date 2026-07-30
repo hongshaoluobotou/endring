@@ -15,7 +15,8 @@
 		"InventoryHeadLockMixin",
 		"EnchantmentXpMixin",
 		"AnvilXpMixin",
-		"MobTargetMixin"
+		"MobTargetMixin",
+		"RingArmourWearMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

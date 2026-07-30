@@ -36,13 +36,11 @@ public final class ModItems {
 			.build();
 
 		Item.Properties properties = new Item.Properties()
-			.stacksTo(1)
 			.equippable(EquipmentSlot.HEAD)
 			.attributes(attributes)
 			.setId(END_RING_KEY)
+			.durability(EndRingItem.MAX_DAMAGE)
 			.component(ModComponents.END_RING, EndRingComponent.FULL)
-			.component(DataComponents.CUSTOM_MODEL_DATA, new net.minecraft.world.item.component.CustomModelData(
-				java.util.List.of((float) EndRingItem.MAX_TOTEMS), java.util.List.of(), java.util.List.of(), java.util.List.of()))
 			.delayedComponent(DataComponents.ENCHANTMENTS, context -> {
 				ItemEnchantments.Mutable enchantments = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
 				enchantments.set(context.getOrThrow(Enchantments.BINDING_CURSE), 1);

@@ -2,12 +2,12 @@ package com.hongshaoluobotou;
 
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.enchantment.EnchantmentHelper;
 
 public class EndRingItem extends Item {
 	public static final int MAX_TOTEMS = 8;
@@ -17,25 +17,6 @@ public class EndRingItem extends Item {
 
 	public EndRingItem(Properties properties) {
 		super(properties);
-	}
-
-	// The durability bar is a pure display of the stored totems (8 = full), NOT vanilla item damage: the
-	// ring has no DAMAGE component, so ordinary combat / armour wear can never drain it. Totems only ever
-	// move via the fatal-hit consume and the timed regen. Bar full when totems == MAX_TOTEMS.
-	@Override
-	public boolean isBarVisible(ItemStack stack) {
-		return isRing(stack) && getTotems(stack) < MAX_TOTEMS;
-	}
-
-	@Override
-	public int getBarWidth(ItemStack stack) {
-		return net.minecraft.util.Mth.clamp(Math.round(getTotems(stack) * 13.0F / MAX_TOTEMS), 0, 13);
-	}
-
-	@Override
-	public int getBarColor(ItemStack stack) {
-		float fraction = (float) getTotems(stack) / MAX_TOTEMS;
-		return net.minecraft.util.Mth.hsvToRgb(fraction / 3.0F, 1.0F, 1.0F);
 	}
 
 	public static boolean isRing(ItemStack stack) {
@@ -100,50 +81,39 @@ public class EndRingItem extends Item {
 		}
 	}
 
+	// Totems are mirrored into vanilla DAMAGE: damage = MAX_TOTEMS - totems. MAX_DAMAGE is MAX_TOTEMS + 1
+	// so the bar at the bottom (totems=0, damage=MAX_TOTEMS) still shows one notch of width — we never
+	// reach MAX_DAMAGE itself, which keeps the ring out of vanilla's break-and-shrink path while still
+	// driving the durability bar, Unbreaking, Mending, and ItemStack::isDamaged uniformly.
+	public static final int MAX_DAMAGE = MAX_TOTEMS + 1;
 	public static int getTotems(ItemStack ring) {
-		return data(ring).storedTotems();
+		return Math.max(0, MAX_TOTEMS - ring.getDamageValue());
 	}
 
 	public static void setTotems(ItemStack ring, int count) {
-		EndRingComponent current = data(ring);
-		int clamped = Math.clamp(count, 0, MAX_TOTEMS);
-		ring.set(ModComponents.END_RING, new EndRingComponent(clamped, current.totemRegenProgress()));
-		syncModel(ring, clamped);
-	}
-
-	// Mirror the totem count into custom_model_data float #0 so the client item model can range-dispatch
-	// on it: 0 -> damaged, 1-3 (<50%) -> chipped, 4-8 -> normal. The END_RING component itself is not a
-	// client model property, so this bridge is what actually swaps the visible model.
-	private static void syncModel(ItemStack ring, int totems) {
-		net.minecraft.world.item.component.CustomModelData current =
-			ring.getOrDefault(DataComponents.CUSTOM_MODEL_DATA, net.minecraft.world.item.component.CustomModelData.EMPTY);
-		ring.set(
-			DataComponents.CUSTOM_MODEL_DATA,
-			new net.minecraft.world.item.component.CustomModelData(
-				java.util.List.of((float) totems),
-				current.flags(),
-				current.strings(),
-				current.colors()
-			)
-		);
+		int damage = Math.max(0, MAX_TOTEMS - Math.clamp(count, 0, MAX_TOTEMS));
+		ring.setDamageValue(damage);
 	}
 
 	// Consume one totem for a fatal hit, honouring the Unbreaking enchantment: Unbreaking is given a
-	// chance to spare the totem entirely (via EnchantmentHelper.processDurabilityChange, the same path
-	// vanilla uses for tool durability). Returns true when a totem was actually spent.
-	public static boolean consumeTotem(ServerLevel level, ItemStack ring) {
+	// chance to spare the totem entirely (the same way vanilla tools gain durability). Returns true when
+	// a totem was actually spent. The ring never breaks: damage is clamped below MAX_DAMAGE.
+	public static boolean consumeTotem(ServerPlayer player, ItemStack ring) {
 		if (getTotems(ring) <= 0) {
 			return false;
 		}
-		int cost = EnchantmentHelper.processDurabilityChange(level, ring, 1);
+		// Run the Unbreaking pass the same way vanilla tools do, then write the new damage directly. A
+		// direct setDamageValue cannot shrink the stack (ItemStack only shrinks inside applyDamage), so
+		// the ring is safe at the upper end even though we momentarily reach MAX_DAMAGE on paper.
+		int cost = net.minecraft.world.item.enchantment.EnchantmentHelper.processDurabilityChange(player.level(), ring, 1);
 		if (cost <= 0) {
 			return true;
 		}
-		setTotems(ring, getTotems(ring) - cost);
+		ring.setDamageValue(Math.min(ring.getDamageValue() + cost, MAX_DAMAGE - 1));
 		return true;
 	}
 
-	private static EndRingComponent data(ItemStack ring) {
+	public static EndRingComponent data(ItemStack ring) {
 		return ring.getOrDefault(ModComponents.END_RING, EndRingComponent.DEFAULT);
 	}
 }

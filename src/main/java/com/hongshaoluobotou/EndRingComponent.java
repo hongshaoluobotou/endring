@@ -14,20 +14,18 @@ import net.minecraft.world.item.component.TooltipProvider;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
-public record EndRingComponent(int storedTotems, int totemRegenProgress) implements TooltipProvider {
-	public static final EndRingComponent DEFAULT = new EndRingComponent(0, 0);
-	public static final EndRingComponent FULL = new EndRingComponent(EndRingItem.MAX_TOTEMS, 0);
+public record EndRingComponent(int storedTotems) implements TooltipProvider {
+	public static final EndRingComponent DEFAULT = new EndRingComponent(0);
+	public static final EndRingComponent FULL = new EndRingComponent(EndRingItem.MAX_TOTEMS);
 
 	public static final Codec<EndRingComponent> CODEC = RecordCodecBuilder.create(instance ->
 		instance.group(
-			Codec.intRange(0, EndRingItem.MAX_TOTEMS).fieldOf("storedTotems").forGetter(EndRingComponent::storedTotems),
-			Codec.INT.fieldOf("totemRegenProgress").forGetter(EndRingComponent::totemRegenProgress)
+			Codec.intRange(0, EndRingItem.MAX_TOTEMS).fieldOf("storedTotems").forGetter(EndRingComponent::storedTotems)
 		).apply(instance, EndRingComponent::new)
 	);
 
 	public static final StreamCodec<RegistryFriendlyByteBuf, EndRingComponent> STREAM_CODEC = StreamCodec.composite(
 		ByteBufCodecs.VAR_INT, EndRingComponent::storedTotems,
-		ByteBufCodecs.VAR_INT, EndRingComponent::totemRegenProgress,
 		EndRingComponent::new
 	);
 

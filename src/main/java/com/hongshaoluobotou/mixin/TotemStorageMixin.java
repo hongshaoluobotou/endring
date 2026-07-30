@@ -26,7 +26,7 @@ public class TotemStorageMixin {
 			return;
 		}
 
-		EndRingItem.consumeTotem(player.level(), ring);
+		EndRingItem.consumeTotem(player, ring);
 		float maxHealth = player.getMaxHealth();
 		float restoreFrac = 0.5F + player.getRandom().nextFloat() * 0.5F;
 		player.setHealth(maxHealth * restoreFrac);
