@@ -1,5 +1,6 @@
 package com.hongshaoluobotou.mixin;
 
+import com.hongshaoluobotou.DragonDeath;
 import com.hongshaoluobotou.EndRingItem;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,6 +30,13 @@ public abstract class DamageResistanceMixin {
 	@Inject(method = "hurtServer", at = @At("HEAD"), cancellable = true)
 	private void endring$immuneDamage(ServerLevel level, DamageSource source, float damage, CallbackInfoReturnable<Boolean> cir) {
 		if (!((Object) this instanceof Player player) || EndRingItem.getWorn(player).isEmpty()) {
+			return;
+		}
+		// While the ender-dragon death animation plays the player is fully invulnerable, mirroring the
+		// vanilla dragon whose hurt() short-circuits during the DYING phase. Otherwise a hard hit (e.g. a
+		// Warden) landing between ticks could drop health to 0 before freeze() resets it back to 1.
+		if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer && DragonDeath.isPlaying(serverPlayer)) {
+			cir.setReturnValue(false);
 			return;
 		}
 		if (endring$isImmune(source)) {
