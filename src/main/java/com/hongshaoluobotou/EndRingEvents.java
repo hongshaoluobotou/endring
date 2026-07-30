@@ -37,6 +37,7 @@ public final class EndRingEvents {
 	private static final Map<UUID, Integer> TOTEM_REGEN = new HashMap<>();
 
 	private static final net.minecraft.resources.Identifier DYNAMIC_ARMOR_ID = EndRing.id("end_ring_dynamic_armor");
+	private static final net.minecraft.resources.Identifier DYNAMIC_ARMOR_TOUGHNESS_ID = EndRing.id("end_ring_dynamic_armor_toughness");
 	private static final net.minecraft.resources.Identifier LAST_STAND_HEALTH_ID = EndRing.id("end_ring_last_stand_health");
 	private static final net.minecraft.resources.Identifier BLOCK_REACH_ID = EndRing.id("end_ring_block_reach");
 	private static final net.minecraft.resources.Identifier ENTITY_REACH_ID = EndRing.id("end_ring_entity_reach");
@@ -108,7 +109,6 @@ public final class EndRingEvents {
 
 		playHurtSound(player);
 		applyWornEffects(player);
-		tickLastStand(player, ring);
 		tickFlightBoost(player);
 		tickTotemRegen(player, ring);
 	}
@@ -152,7 +152,7 @@ public final class EndRingEvents {
 			player.removeEffect(MobEffects.CONDUIT_POWER);
 		}
 
-		float frac = player.getHealth() / player.getMaxHealth();
+		float frac = totemFraction(player);
 		updateDynamicArmor(player, frac);
 
 		applyReach(player);
@@ -165,10 +165,12 @@ public final class EndRingEvents {
 		if (frac < 0.10F) {
 			applyTiered(player, MobEffects.REGENERATION, 1);
 		}
+
+		updateLastStandHealth(player, frac);
 	}
 
 	private static void onDamaged(ServerPlayer player) {
-		float frac = player.getHealth() / player.getMaxHealth();
+		float frac = totemFraction(player);
 
 		int resistanceAmp = resistanceAmplifier(frac);
 		if (resistanceAmp >= 0) {
@@ -180,17 +182,23 @@ public final class EndRingEvents {
 		}
 	}
 
+	// The lower the fraction of stored totems, the stronger the granted attributes/effects (a totem count
+	// of 0 yields fraction 0, MAX_TOTEMS yields 1).
+	private static float totemFraction(ServerPlayer player) {
+		return (float) EndRingItem.getTotems(EndRingItem.getWorn(player)) / EndRingItem.MAX_TOTEMS;
+	}
+
 	private static int resistanceAmplifier(float frac) {
-		if (frac < 0.60F) {
+		if (frac < 0.20F) {
 			return 3;
 		}
-		if (frac < 0.70F) {
+		if (frac < 0.40F) {
 			return 2;
 		}
-		if (frac < 0.80F) {
+		if (frac < 0.60F) {
 			return 1;
 		}
-		if (frac < 0.90F) {
+		if (frac < 0.80F) {
 			return 0;
 		}
 		return -1;
@@ -198,15 +206,27 @@ public final class EndRingEvents {
 
 	private static int strengthAmplifier(float frac) {
 		if (frac < 0.10F) {
-			return 15;
+			return 63;
 		}
 		if (frac < 0.20F) {
-			return 8;
+			return 48;
 		}
 		if (frac < 0.30F) {
-			return 3;
+			return 35;
 		}
 		if (frac < 0.40F) {
+			return 24;
+		}
+		if (frac < 0.50F) {
+			return 15;
+		}
+		if (frac < 0.60F) {
+			return 8;
+		}
+		if (frac < 0.70F) {
+			return 3;
+		}
+		if (frac < 0.80F) {
 			return 0;
 		}
 		return -1;
@@ -214,42 +234,81 @@ public final class EndRingEvents {
 
 	private static double dynamicArmorBonus(float frac) {
 		if (frac < 0.10F) {
-			return 21.99;
+			return 25;
 		}
 		if (frac < 0.20F) {
-			return 21.9;
+			return 24;
 		}
 		if (frac < 0.30F) {
-			return 16.0;
+			return 20;
 		}
 		if (frac < 0.40F) {
-			return 9.0;
+			return 15;
 		}
 		if (frac < 0.50F) {
-			return 4.0;
+			return 10.0;
 		}
 		if (frac < 0.60F) {
+			return 5.0;
+		}
+		if (frac < 0.70F) {
+			return 3.0;
+		}
+		if (frac < 0.80F) {
 			return 1.0;
 		}
 		return 0.0;
 	}
 
+	private static double dynamicArmorToughnessBonus(float frac) {
+		if (frac < 0.10F) {
+			return 63;
+		}
+		if (frac < 0.20F) {
+			return 48;
+		}
+		if (frac < 0.30F) {
+			return 35;
+		}
+		if (frac < 0.40F) {
+			return 24;
+		}
+		if (frac < 0.50F) {
+			return 15;
+		}
+		if (frac < 0.60F) {
+			return 8;
+		}
+		if (frac < 0.70F) {
+			return 3;
+		}
+		if (frac < 0.80F) {
+			return 0;
+		}
+		return -1;
+	}
+
 	private static void updateDynamicArmor(ServerPlayer player, float frac) {
-		AttributeInstance armor = player.getAttribute(Attributes.ARMOR);
-		if (armor == null) {
+		updateModifier(player, Attributes.ARMOR, DYNAMIC_ARMOR_ID, dynamicArmorBonus(frac));
+		updateModifier(player, Attributes.ARMOR_TOUGHNESS, DYNAMIC_ARMOR_TOUGHNESS_ID, dynamicArmorToughnessBonus(frac));
+	}
+
+	private static void updateModifier(ServerPlayer player, Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute,
+			net.minecraft.resources.Identifier id, double bonus) {
+		AttributeInstance instance = player.getAttribute(attribute);
+		if (instance == null) {
 			return;
 		}
-		double bonus = dynamicArmorBonus(frac);
-		AttributeModifier existing = armor.getModifier(DYNAMIC_ARMOR_ID);
+		AttributeModifier existing = instance.getModifier(id);
 		if (bonus <= 0.0) {
 			if (existing != null) {
-				armor.removeModifier(DYNAMIC_ARMOR_ID);
+				instance.removeModifier(id);
 			}
 			return;
 		}
 		if (existing == null || existing.amount() != bonus) {
-			armor.removeModifier(DYNAMIC_ARMOR_ID);
-			armor.addOrUpdateTransientModifier(new AttributeModifier(DYNAMIC_ARMOR_ID, bonus, AttributeModifier.Operation.ADD_VALUE));
+			instance.removeModifier(id);
+			instance.addOrUpdateTransientModifier(new AttributeModifier(id, bonus, AttributeModifier.Operation.ADD_VALUE));
 		}
 	}
 
@@ -257,6 +316,10 @@ public final class EndRingEvents {
 		AttributeInstance armor = player.getAttribute(Attributes.ARMOR);
 		if (armor != null && armor.getModifier(DYNAMIC_ARMOR_ID) != null) {
 			armor.removeModifier(DYNAMIC_ARMOR_ID);
+		}
+		AttributeInstance toughness = player.getAttribute(Attributes.ARMOR_TOUGHNESS);
+		if (toughness != null && toughness.getModifier(DYNAMIC_ARMOR_TOUGHNESS_ID) != null) {
+			toughness.removeModifier(DYNAMIC_ARMOR_TOUGHNESS_ID);
 		}
 	}
 
@@ -291,26 +354,51 @@ public final class EndRingEvents {
 		}
 	}
 
-	private static void tickLastStand(ServerPlayer player, ItemStack ring) {
-		if (EndRingItem.getTotems(ring) <= 0) {
-			if (LAST_STAND.add(player.getUUID())) {
-				enterLastStand(player);
+	// Bonus max health scales up smoothly as stored totems run low, peaking at LAST_STAND_MAX_HEALTH_BONUS
+	// when no totems remain. Replaces the old fixed +20 granted only at zero totems.
+	private static void updateLastStandHealth(ServerPlayer player, float frac) {
+		double bonus = (1.0 - frac) * LAST_STAND_MAX_HEALTH_BONUS;
+		AttributeInstance maxHealth = player.getAttribute(Attributes.MAX_HEALTH);
+		if (maxHealth == null) {
+			return;
+		}
+		AttributeModifier existing = maxHealth.getModifier(LAST_STAND_HEALTH_ID);
+		if (bonus <= 0.0) {
+			if (existing != null) {
+				maxHealth.removeModifier(LAST_STAND_HEALTH_ID);
 			}
-			applyTiered(player, MobEffects.RESISTANCE, 3);
-			applyTiered(player, MobEffects.REGENERATION, 1);
-			applyTiered(player, MobEffects.STRENGTH, 15);
-		} else if (LAST_STAND.remove(player.getUUID())) {
-			removeLastStand(player);
+			return;
+		}
+		if (existing == null || existing.amount() != bonus) {
+			maxHealth.removeModifier(LAST_STAND_HEALTH_ID);
+			maxHealth.addOrUpdateTransientModifier(new AttributeModifier(LAST_STAND_HEALTH_ID, bonus, AttributeModifier.Operation.ADD_VALUE));
 		}
 	}
 
-	private static void enterLastStand(ServerPlayer player) {
-		AttributeInstance maxHealth = player.getAttribute(Attributes.MAX_HEALTH);
-		if (maxHealth != null && maxHealth.getModifier(LAST_STAND_HEALTH_ID) == null) {
-			maxHealth.addOrUpdateTransientModifier(new AttributeModifier(LAST_STAND_HEALTH_ID, LAST_STAND_MAX_HEALTH_BONUS, AttributeModifier.Operation.ADD_VALUE));
+	// One-shot absorption granted when a totem is consumed. Lasts a single totem's worth of time and is not
+	// refreshed every tick; the fewer totems left after the trigger, the stronger the shield.
+	public static void grantTotemAbsorption(ServerPlayer player) {
+		int amplifier = absorptionAmplifier(totemFraction(player));
+		if (amplifier < 0) {
+			return;
 		}
-		player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, MobEffectInstance.INFINITE_DURATION, 9, false, true, true));
-		player.addEffect(new MobEffectInstance(MobEffects.INSTANT_HEALTH, 1, 9, false, true, true));
+		player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, EndRingItem.TOTEM_REGEN_TICKS, amplifier, false, true, true));
+	}
+
+	private static int absorptionAmplifier(float frac) {
+		if (frac < 0.10F) {
+			return 9;
+		}
+		if (frac < 0.30F) {
+			return 5;
+		}
+		if (frac < 0.50F) {
+			return 2;
+		}
+		if (frac < 0.70F) {
+			return 0;
+		}
+		return -1;
 	}
 
 	private static void removeLastStand(ServerPlayer player) {

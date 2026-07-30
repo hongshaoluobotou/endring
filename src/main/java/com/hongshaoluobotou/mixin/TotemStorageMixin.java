@@ -1,5 +1,6 @@
 package com.hongshaoluobotou.mixin;
 
+import com.hongshaoluobotou.EndRingEvents;
 import com.hongshaoluobotou.EndRingItem;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -26,8 +27,11 @@ public class TotemStorageMixin {
 		}
 
 		EndRingItem.setTotems(ring, EndRingItem.getTotems(ring) - 1);
-		player.setHealth(1.0F);
+		float maxHealth = player.getMaxHealth();
+		float restoreFrac = 0.5F + player.getRandom().nextFloat() * 0.5F;
+		player.setHealth(maxHealth * restoreFrac);
 		DeathProtection.TOTEM_OF_UNDYING.applyEffects(ring, player);
+		EndRingEvents.grantTotemAbsorption(player);
 		player.level().broadcastEntityEvent(player, (byte) 35);
 		player.gameEvent(GameEvent.ITEM_INTERACT_FINISH);
 		cir.setReturnValue(true);
