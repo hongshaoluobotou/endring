@@ -12,7 +12,9 @@
 		"TotemStorageMixin",
 		"AirSupplyMixin",
 		"HeadSlotLockMixin",
-		"InventoryHeadLockMixin"
+		"InventoryHeadLockMixin",
+		"EnchantmentXpMixin",
+		"AnvilXpMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
