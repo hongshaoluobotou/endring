@@ -2,8 +2,8 @@
 	"format_version": "1.21.11",
 	"credit": "Made with Blockbench",
 	"textures": {
-		"particle": "endring:item/end_ring",
-		"tex": "endring:item/end_ring"
+		"particle": "endring:item/chipped_end_ring",
+		"tex": "endring:item/chipped_end_ring"
 	},
 	"elements": [
 		{
@@ -128,7 +128,7 @@
 		},
 		"gui": {
 			"rotation": [75, 0, 0],
-			"translation": [0, -2, 0]
+			"translation": [-0.25, -2, 0]
 		},
 		"head": {
 			"translation": [0, 26, 0]

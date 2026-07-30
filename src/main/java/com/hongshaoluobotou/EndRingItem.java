@@ -106,7 +106,26 @@ public class EndRingItem extends Item {
 
 	public static void setTotems(ItemStack ring, int count) {
 		EndRingComponent current = data(ring);
-		ring.set(ModComponents.END_RING, new EndRingComponent(Math.clamp(count, 0, MAX_TOTEMS), current.totemRegenProgress()));
+		int clamped = Math.clamp(count, 0, MAX_TOTEMS);
+		ring.set(ModComponents.END_RING, new EndRingComponent(clamped, current.totemRegenProgress()));
+		syncModel(ring, clamped);
+	}
+
+	// Mirror the totem count into custom_model_data float #0 so the client item model can range-dispatch
+	// on it: 0 -> damaged, 1-3 (<50%) -> chipped, 4-8 -> normal. The END_RING component itself is not a
+	// client model property, so this bridge is what actually swaps the visible model.
+	private static void syncModel(ItemStack ring, int totems) {
+		net.minecraft.world.item.component.CustomModelData current =
+			ring.getOrDefault(DataComponents.CUSTOM_MODEL_DATA, net.minecraft.world.item.component.CustomModelData.EMPTY);
+		ring.set(
+			DataComponents.CUSTOM_MODEL_DATA,
+			new net.minecraft.world.item.component.CustomModelData(
+				java.util.List.of((float) totems),
+				current.flags(),
+				current.strings(),
+				current.colors()
+			)
+		);
 	}
 
 	// Consume one totem for a fatal hit, honouring the Unbreaking enchantment: Unbreaking is given a
