@@ -7,15 +7,35 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 
 public class EndRingItem extends Item {
-	public static final int MAX_TOTEMS = 9;
+	public static final int MAX_TOTEMS = 8;
 	public static final int TOTEM_REGEN_TICKS = 600;
 
 	static final int LORE_LINES = 11;
 
 	public EndRingItem(Properties properties) {
 		super(properties);
+	}
+
+	// The durability bar is a pure display of the stored totems (8 = full), NOT vanilla item damage: the
+	// ring has no DAMAGE component, so ordinary combat / armour wear can never drain it. Totems only ever
+	// move via the fatal-hit consume and the timed regen. Bar full when totems == MAX_TOTEMS.
+	@Override
+	public boolean isBarVisible(ItemStack stack) {
+		return isRing(stack) && getTotems(stack) < MAX_TOTEMS;
+	}
+
+	@Override
+	public int getBarWidth(ItemStack stack) {
+		return net.minecraft.util.Mth.clamp(Math.round(getTotems(stack) * 13.0F / MAX_TOTEMS), 0, 13);
+	}
+
+	@Override
+	public int getBarColor(ItemStack stack) {
+		float fraction = (float) getTotems(stack) / MAX_TOTEMS;
+		return net.minecraft.util.Mth.hsvToRgb(fraction / 3.0F, 1.0F, 1.0F);
 	}
 
 	public static boolean isRing(ItemStack stack) {
@@ -87,6 +107,21 @@ public class EndRingItem extends Item {
 	public static void setTotems(ItemStack ring, int count) {
 		EndRingComponent current = data(ring);
 		ring.set(ModComponents.END_RING, new EndRingComponent(Math.clamp(count, 0, MAX_TOTEMS), current.totemRegenProgress()));
+	}
+
+	// Consume one totem for a fatal hit, honouring the Unbreaking enchantment: Unbreaking is given a
+	// chance to spare the totem entirely (via EnchantmentHelper.processDurabilityChange, the same path
+	// vanilla uses for tool durability). Returns true when a totem was actually spent.
+	public static boolean consumeTotem(ServerLevel level, ItemStack ring) {
+		if (getTotems(ring) <= 0) {
+			return false;
+		}
+		int cost = EnchantmentHelper.processDurabilityChange(level, ring, 1);
+		if (cost <= 0) {
+			return true;
+		}
+		setTotems(ring, getTotems(ring) - cost);
+		return true;
 	}
 
 	private static EndRingComponent data(ItemStack ring) {

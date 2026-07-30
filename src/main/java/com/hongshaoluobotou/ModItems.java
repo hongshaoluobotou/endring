@@ -40,7 +40,7 @@ public final class ModItems {
 			.equippable(EquipmentSlot.HEAD)
 			.attributes(attributes)
 			.setId(END_RING_KEY)
-			.component(ModComponents.END_RING, EndRingComponent.DEFAULT)
+			.component(ModComponents.END_RING, EndRingComponent.FULL)
 			.delayedComponent(DataComponents.ENCHANTMENTS, context -> {
 				ItemEnchantments.Mutable enchantments = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
 				enchantments.set(context.getOrThrow(Enchantments.BINDING_CURSE), 1);

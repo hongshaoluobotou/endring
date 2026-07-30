@@ -1,6 +1,5 @@
 {
   "item.endring.end_ring": "End Ring",
-  "item.endring.end_ring.totems": "Stored Totems: %s/%s",
   "item.endring.end_ring.desc1": "\u00a77Curse of Binding: can't remove, won't drop on death.",
   "item.endring.end_ring.desc2": "\u00a77Armor: 20, hp<60%\u219222, <40%\u219224, <20%\u219224.9.",
   "item.endring.end_ring.desc3": "\u00a77Immune: fall / fire / explosion.",
@@ -11,5 +10,5 @@
   "item.endring.end_ring.desc8": "\u00a77Regen: hurt<20%\u2192Regen I, <10%\u2192Regen II.",
   "item.endring.end_ring.desc9": "\u00a77Creative flight, speeds up while sprinting/ascending.",
   "item.endring.end_ring.desc10": "\u00a77Night Vision at night, Conduit underwater, creative mining.",
-  "item.endring.end_ring.desc11": "\u00a77Fatal hit consumes 1 totem (+1/30s, max 9); empty triggers Ender Dragon death."
+  "item.endring.end_ring.desc11": "\u00a77Fatal hit consumes 1 totem (durability bar; +1/30s, max 8; Unbreaking may save it); empty triggers Ender Dragon death."
 }

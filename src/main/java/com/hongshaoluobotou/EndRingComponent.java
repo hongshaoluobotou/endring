@@ -16,6 +16,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 public record EndRingComponent(int storedTotems, int totemRegenProgress) implements TooltipProvider {
 	public static final EndRingComponent DEFAULT = new EndRingComponent(0, 0);
+	public static final EndRingComponent FULL = new EndRingComponent(EndRingItem.MAX_TOTEMS, 0);
 
 	public static final Codec<EndRingComponent> CODEC = RecordCodecBuilder.create(instance ->
 		instance.group(
@@ -32,10 +33,6 @@ public record EndRingComponent(int storedTotems, int totemRegenProgress) impleme
 
 	@Override
 	public void addToTooltip(Item.TooltipContext context, Consumer<Component> tooltip, TooltipFlag flag, DataComponentGetter getter) {
-		tooltip.accept(
-			Component.translatable("item.endring.end_ring.totems", storedTotems, EndRingItem.MAX_TOTEMS)
-				.withStyle(ChatFormatting.LIGHT_PURPLE)
-		);
 		for (int i = 1; i <= EndRingItem.LORE_LINES; i++) {
 			tooltip.accept(
 				Component.translatable("item.endring.end_ring.desc" + i)
