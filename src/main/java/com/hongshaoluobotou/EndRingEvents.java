@@ -167,8 +167,13 @@ public final class EndRingEvents {
 			applyTiered(player, MobEffects.STRENGTH, strengthAmp);
 		}
 
-		if (frac < 0.10F) {
-			applyTiered(player, MobEffects.REGENERATION, 1);
+		// Regeneration scales with how empty the ring is: at frac < 0.3 we bump the level up to Regen
+		// II (or grant it fresh), and at frac < 0.6 we ensure Regen I is running. Above 0.6 the ring
+		// is "full" and the player doesn't need any help. We never lower an existing effect, only
+		// raise it.
+		int regenAmp = regenerationAmplifier(frac);
+		if (regenAmp >= 0) {
+			applyTiered(player, MobEffects.REGENERATION, regenAmp);
 		}
 
 		updateLastStandHealth(player, frac);
@@ -180,10 +185,6 @@ public final class EndRingEvents {
 		int resistanceAmp = resistanceAmplifier(frac);
 		if (resistanceAmp >= 0) {
 			refreshFixed(player, MobEffects.RESISTANCE, resistanceAmp, HURT_RESISTANCE_DURATION);
-		}
-
-		if (frac < 0.20F && frac >= 0.10F) {
-			applyTiered(player, MobEffects.REGENERATION, 0);
 		}
 	}
 
@@ -211,27 +212,38 @@ public final class EndRingEvents {
 		return -1;
 	}
 
+	// < 0.3: ensure Regen II (amp 1). < 0.6: ensure Regen I (amp 0). >= 0.6: leave regen alone.
+	private static int regenerationAmplifier(float frac) {
+		if (frac < 0.3F) {
+			return 1;
+		}
+		if (frac < 0.6F) {
+			return 0;
+		}
+		return -1;
+	}
+
 	private static int strengthAmplifier(float frac) {
 		if (frac < 0.10F) {
-			return 63;
+			return 127;
 		}
 		if (frac < 0.20F) {
-			return 48;
+			return 63;
 		}
 		if (frac < 0.30F) {
-			return 35;
+			return 31;
 		}
 		if (frac < 0.40F) {
-			return 24;
-		}
-		if (frac < 0.50F) {
 			return 15;
 		}
+		if (frac < 0.50F) {
+			return 7;
+		}
 		if (frac < 0.60F) {
-			return 8;
+			return 3;
 		}
 		if (frac < 0.70F) {
-			return 3;
+			return 1;
 		}
 		if (frac < 0.80F) {
 			return 0;
@@ -244,7 +256,7 @@ public final class EndRingEvents {
 			return 25;
 		}
 		if (frac < 0.20F) {
-			return 24;
+			return 23;
 		}
 		if (frac < 0.30F) {
 			return 20;
@@ -269,28 +281,28 @@ public final class EndRingEvents {
 
 	private static double dynamicArmorToughnessBonus(float frac) {
 		if (frac < 0.10F) {
-			return 63;
+			return 128;
 		}
 		if (frac < 0.20F) {
-			return 48;
+			return 64;
 		}
 		if (frac < 0.30F) {
-			return 35;
+			return 32;
 		}
 		if (frac < 0.40F) {
-			return 24;
+			return 16;
 		}
 		if (frac < 0.50F) {
-			return 15;
-		}
-		if (frac < 0.60F) {
 			return 8;
 		}
+		if (frac < 0.60F) {
+			return 4;
+		}
 		if (frac < 0.70F) {
-			return 3;
+			return 2;
 		}
 		if (frac < 0.80F) {
-			return 0;
+			return 1;
 		}
 		return -1;
 	}
