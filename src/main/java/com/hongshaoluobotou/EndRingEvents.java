@@ -38,6 +38,7 @@ public final class EndRingEvents {
 
 	private static final net.minecraft.resources.Identifier DYNAMIC_ARMOR_ID = EndRing.id("end_ring_dynamic_armor");
 	private static final net.minecraft.resources.Identifier DYNAMIC_ARMOR_TOUGHNESS_ID = EndRing.id("end_ring_dynamic_armor_toughness");
+	private static final net.minecraft.resources.Identifier DYNAMIC_KNOCKBACK_RESISTANCE_ID = EndRing.id("end_ring_dynamic_knockback_resistance");
 	private static final net.minecraft.resources.Identifier LAST_STAND_HEALTH_ID = EndRing.id("end_ring_last_stand_health");
 	private static final net.minecraft.resources.Identifier BLOCK_REACH_ID = EndRing.id("end_ring_block_reach");
 	private static final net.minecraft.resources.Identifier ENTITY_REACH_ID = EndRing.id("end_ring_entity_reach");
@@ -288,9 +289,38 @@ public final class EndRingEvents {
 		return -1;
 	}
 
+	private static double dynamicKnockbackResistanceBonus(float frac) {
+		if (frac < 0.10F) {
+			return 0.8;
+		}
+		if (frac < 0.20F) {
+			return 0.7;
+		}
+		if (frac < 0.30F) {
+			return 0.6;
+		}
+		if (frac < 0.40F) {
+			return 0.5;
+		}
+		if (frac < 0.50F) {
+			return 0.4;
+		}
+		if (frac < 0.60F) {
+			return 0.3;
+		}
+		if (frac < 0.70F) {
+			return 0.2;
+		}
+		if (frac < 0.80F) {
+			return 0.1;
+		}
+		return -1;
+	}
+
 	private static void updateDynamicArmor(ServerPlayer player, float frac) {
 		updateModifier(player, Attributes.ARMOR, DYNAMIC_ARMOR_ID, dynamicArmorBonus(frac));
 		updateModifier(player, Attributes.ARMOR_TOUGHNESS, DYNAMIC_ARMOR_TOUGHNESS_ID, dynamicArmorToughnessBonus(frac));
+		updateModifier(player, Attributes.KNOCKBACK_RESISTANCE, DYNAMIC_KNOCKBACK_RESISTANCE_ID, dynamicKnockbackResistanceBonus(frac));
 	}
 
 	private static void updateModifier(ServerPlayer player, Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute,
@@ -320,6 +350,10 @@ public final class EndRingEvents {
 		AttributeInstance toughness = player.getAttribute(Attributes.ARMOR_TOUGHNESS);
 		if (toughness != null && toughness.getModifier(DYNAMIC_ARMOR_TOUGHNESS_ID) != null) {
 			toughness.removeModifier(DYNAMIC_ARMOR_TOUGHNESS_ID);
+		}
+		AttributeInstance knockbackResistance = player.getAttribute(Attributes.KNOCKBACK_RESISTANCE);
+		if (knockbackResistance != null && knockbackResistance.getModifier(DYNAMIC_KNOCKBACK_RESISTANCE_ID) != null) {
+			knockbackResistance.removeModifier(DYNAMIC_KNOCKBACK_RESISTANCE_ID);
 		}
 	}
 
