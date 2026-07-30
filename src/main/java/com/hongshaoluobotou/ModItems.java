@@ -29,8 +29,9 @@ public final class ModItems {
 
 	private static Item createEndRing() {
 		ItemAttributeModifiers attributes = ItemAttributeModifiers.builder()
-			.add(Attributes.ARMOR, modifier("end_ring_armor", 20.0), EquipmentSlotGroup.HEAD)
-			.add(Attributes.ARMOR_TOUGHNESS, modifier("end_ring_toughness", 1_000_000.0), EquipmentSlotGroup.HEAD)
+			.add(Attributes.ARMOR, modifier("end_ring_armor", 3.0), EquipmentSlotGroup.HEAD)
+//			.add(Attributes.ARMOR_TOUGHNESS, modifier("end_ring_toughness", 1_000_000.0), EquipmentSlotGroup.HEAD)
+			.add(Attributes.ARMOR_TOUGHNESS, modifier("end_ring_toughness", 3.0), EquipmentSlotGroup.HEAD)
 			.build();
 
 		Item.Properties properties = new Item.Properties()

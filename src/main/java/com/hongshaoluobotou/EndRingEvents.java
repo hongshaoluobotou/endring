@@ -30,6 +30,11 @@ public final class EndRingEvents {
 	private static final Map<UUID, Float> LAST_HEALTH = new HashMap<>();
 	private static final Map<UUID, FlightState> FLIGHT = new HashMap<>();
 	private static final Set<UUID> LAST_STAND = new HashSet<>();
+	// Totem regen progress is tracked here instead of on the item so the ring's component is not
+	// rewritten every tick. Constant per-tick component churn made vanilla treat the helmet as
+	// re-equipped each tick (replaying the equip sound / re-syncing the slot). The item is only mutated
+	// when a totem is actually gained.
+	private static final Map<UUID, Integer> TOTEM_REGEN = new HashMap<>();
 
 	private static final net.minecraft.resources.Identifier DYNAMIC_ARMOR_ID = EndRing.id("end_ring_dynamic_armor");
 	private static final net.minecraft.resources.Identifier LAST_STAND_HEALTH_ID = EndRing.id("end_ring_last_stand_health");
@@ -92,10 +97,12 @@ public final class EndRingEvents {
 		ItemStack ring = EndRingItem.getWorn(player);
 		if (ring.isEmpty()) {
 			LAST_HEALTH.remove(player.getUUID());
+			TOTEM_REGEN.remove(player.getUUID());
 			removeDynamicArmor(player);
 			removeLastStand(player);
 			removeReach(player);
 			resetFlightSpeed(player);
+			revokeFlight(player);
 			return;
 		}
 
@@ -103,7 +110,22 @@ public final class EndRingEvents {
 		applyWornEffects(player);
 		tickLastStand(player, ring);
 		tickFlightBoost(player);
-		EndRingItem.tickRegen(ring);
+		tickTotemRegen(player, ring);
+	}
+
+	private static void tickTotemRegen(ServerPlayer player, ItemStack ring) {
+		UUID id = player.getUUID();
+		if (EndRingItem.getTotems(ring) >= EndRingItem.MAX_TOTEMS) {
+			TOTEM_REGEN.remove(id);
+			return;
+		}
+		int progress = TOTEM_REGEN.getOrDefault(id, 0) + 1;
+		if (progress >= EndRingItem.TOTEM_REGEN_TICKS) {
+			EndRingItem.setTotems(ring, EndRingItem.getTotems(ring) + 1);
+			TOTEM_REGEN.remove(id);
+		} else {
+			TOTEM_REGEN.put(id, progress);
+		}
 	}
 
 	private static void playHurtSound(ServerPlayer player) {
@@ -191,14 +213,23 @@ public final class EndRingEvents {
 	}
 
 	private static double dynamicArmorBonus(float frac) {
+		if (frac < 0.10F) {
+			return 21.99;
+		}
 		if (frac < 0.20F) {
-			return 4.9;
+			return 21.9;
+		}
+		if (frac < 0.30F) {
+			return 16.0;
 		}
 		if (frac < 0.40F) {
+			return 9.0;
+		}
+		if (frac < 0.50F) {
 			return 4.0;
 		}
 		if (frac < 0.60F) {
-			return 2.0;
+			return 1.0;
 		}
 		return 0.0;
 	}
@@ -376,6 +407,19 @@ public final class EndRingEvents {
 		if (player.getAbilities().getFlyingSpeed() != state.savedSpeed) {
 			state.speed = state.savedSpeed;
 			player.getAbilities().setFlyingSpeed(state.savedSpeed);
+			player.onUpdateAbilities();
+		}
+	}
+
+	// The ring grants flight (mayfly) while worn; take it back once it is gone. Skip creative/spectator,
+	// whose game mode legitimately grants flight so we must not strip it.
+	private static void revokeFlight(ServerPlayer player) {
+		if (player.isCreative() || player.isSpectator()) {
+			return;
+		}
+		if (player.getAbilities().mayfly || player.getAbilities().flying) {
+			player.getAbilities().mayfly = false;
+			player.getAbilities().flying = false;
 			player.onUpdateAbilities();
 		}
 	}

@@ -16,7 +16,7 @@ public class KillCommandMixin {
 		LivingEntity self = (LivingEntity) (Object) this;
 		if (self instanceof ServerPlayer player && !EndRingItem.getWorn(player).isEmpty()) {
 			float damage = 6.0F + player.getRandom().nextFloat() * 12.0F;
-			player.hurtServer(level, player.damageSources().magic(), damage);
+			player.hurtServer(level, player.damageSources().genericKill(), damage);
 			ci.cancel();
 		}
 	}

@@ -10,7 +10,9 @@
 		"DamageResistanceMixin",
 		"DropEquipmentMixin",
 		"TotemStorageMixin",
-		"AirSupplyMixin"
+		"AirSupplyMixin",
+		"HeadSlotLockMixin",
+		"InventoryHeadLockMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
