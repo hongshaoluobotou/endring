@@ -1,14 +1,8 @@
 {
   "item.endring.end_ring": "终末之环",
-  "item.endring.end_ring.desc1": "§7绑定诅咒: 无法脱下, 死亡也不掉落。",
-  "item.endring.end_ring.desc2": "§7护甲: 20, 血量<60%→22, <40%→24, <20%→24.9。",
-  "item.endring.end_ring.desc3": "§7免疫: 摔落 / 火焰 / 爆炸。",
-  "item.endring.end_ring.desc4": "§7减伤80%: 仙人掌 / 冰冻 / 近战 / 远程 / 魔法。",
-  "item.endring.end_ring.desc5": "§7饥饿伤害至少3点。",
-  "item.endring.end_ring.desc6": "§7受伤时: 抗性IV 30秒。",
-  "item.endring.end_ring.desc7": "§7力量: <40%→I, <30%→IV, <20%→IX, <10%→XVI。",
-  "item.endring.end_ring.desc8": "§7回血: 受伤<20%→再生I, <10%→持续再生II。",
-  "item.endring.end_ring.desc9": "§7创造飞行, 冲刺/升降时持续加速。",
-  "item.endring.end_ring.desc10": "§7夜间夜视, 水下潮涌, 徒手创造挖掘。",
-  "item.endring.end_ring.desc11": "§7致命伤害消耗1图腾续命 (耐久条显示; 每30秒+1, 上限8; 耐久魔咒有几率不消耗), 耗尽则触发终末巨龙死亡。"
+  "item.endring.end_ring.desc1": "§8自世界终末之处坠落的环，缄默地缠绕于佩戴者，与其命途永世相系。",
+  "item.endring.end_ring.desc2": "§7束缚之环，一旦戴上便再难分离。",
+  "item.endring.end_ring.desc3": "§7铸就近乎不坏之躯，伤愈者愈强。",
+  "item.endring.end_ring.desc4": "§7赐予凌空之力与荒野中的诸般恩泽。",
+  "item.endring.end_ring.desc5": "§7以图腾之力续命，殆尽时唤醒终末之龙。"
 }

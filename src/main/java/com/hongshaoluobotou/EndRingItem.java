@@ -13,7 +13,7 @@ public class EndRingItem extends Item {
 	public static final int MAX_TOTEMS = 8;
 	public static final int TOTEM_REGEN_TICKS = 600;
 
-	static final int LORE_LINES = 11;
+	static final int LORE_LINES = 5;
 
 	public EndRingItem(Properties properties) {
 		super(properties);

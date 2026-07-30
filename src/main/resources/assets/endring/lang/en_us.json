@@ -1,14 +1,8 @@
 {
   "item.endring.end_ring": "End Ring",
-  "item.endring.end_ring.desc1": "\u00a77Curse of Binding: can't remove, won't drop on death.",
-  "item.endring.end_ring.desc2": "\u00a77Armor: 20, hp<60%\u219222, <40%\u219224, <20%\u219224.9.",
-  "item.endring.end_ring.desc3": "\u00a77Immune: fall / fire / explosion.",
-  "item.endring.end_ring.desc4": "\u00a77-80% dmg: cactus / freeze / melee / ranged / magic.",
-  "item.endring.end_ring.desc5": "\u00a77Starvation deals at least 3.",
-  "item.endring.end_ring.desc6": "\u00a77On hurt: Resistance IV for 30s.",
-  "item.endring.end_ring.desc7": "\u00a77Strength: <40%\u2192I, <30%\u2192IV, <20%\u2192IX, <10%\u2192XVI.",
-  "item.endring.end_ring.desc8": "\u00a77Regen: hurt<20%\u2192Regen I, <10%\u2192Regen II.",
-  "item.endring.end_ring.desc9": "\u00a77Creative flight, speeds up while sprinting/ascending.",
-  "item.endring.end_ring.desc10": "\u00a77Night Vision at night, Conduit underwater, creative mining.",
-  "item.endring.end_ring.desc11": "\u00a77Fatal hit consumes 1 totem (durability bar; +1/30s, max 8; Unbreaking may save it); empty triggers Ender Dragon death."
+  "item.endring.end_ring.desc1": "\u00a78A ring fallen from the world's end, coiled in silence about its bearer, bound to their fate for all time.",
+  "item.endring.end_ring.desc2": "\u00a77A binding ring\u2014once worn, never parted.",
+  "item.endring.end_ring.desc3": "\u00a77Forges a near-unbreakable body; the wounded grow stronger.",
+  "item.endring.end_ring.desc4": "\u00a77Grants flight and sundry blessings in the wild.",
+  "item.endring.end_ring.desc5": "\u00a77Cheats death with totems; when spent, the End Dragon stirs."
 }
