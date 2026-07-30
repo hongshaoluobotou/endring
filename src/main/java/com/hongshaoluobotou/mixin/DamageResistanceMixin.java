@@ -45,12 +45,13 @@ public abstract class DamageResistanceMixin {
 	private static boolean endring$isImmune(DamageSource source) {
 		return source.is(DamageTypeTags.IS_FIRE)
 			|| source.is(DamageTypeTags.IS_FALL)
-			|| source.is(DamageTypeTags.IS_EXPLOSION);
+			|| source.is(DamageTypeTags.IS_EXPLOSION)
+			|| source.is(DamageTypes.CACTUS)
+			|| source.is(DamageTypes.IN_WALL);
 	}
 
 	private static boolean endring$isReduced(DamageSource source) {
-		return source.is(DamageTypes.CACTUS)
-			|| source.is(DamageTypes.SWEET_BERRY_BUSH)
+		return source.is(DamageTypes.SWEET_BERRY_BUSH)
 			|| source.is(DamageTypeTags.IS_FREEZING)
 			|| source.is(DamageTypeTags.IS_PROJECTILE)
 			|| endring$isMelee(source)
