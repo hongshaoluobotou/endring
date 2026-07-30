@@ -9,7 +9,8 @@
 		"CreativeMiningMixin",
 		"DamageResistanceMixin",
 		"DropEquipmentMixin",
-		"TotemStorageMixin"
+		"TotemStorageMixin",
+		"AirSupplyMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

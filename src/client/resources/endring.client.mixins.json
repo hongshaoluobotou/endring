@@ -4,7 +4,9 @@
 	"compatibilityLevel": "JAVA_25",
 	"client": [
 		"HideHeadItemMixin",
-		"CreativeMiningClientMixin"
+		"CreativeMiningClientMixin",
+		"HideAirBubblesMixin",
+		"CreativeMusicMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

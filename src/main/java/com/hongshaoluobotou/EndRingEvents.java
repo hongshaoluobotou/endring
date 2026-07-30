@@ -33,6 +33,12 @@ public final class EndRingEvents {
 
 	private static final net.minecraft.resources.Identifier DYNAMIC_ARMOR_ID = EndRing.id("end_ring_dynamic_armor");
 	private static final net.minecraft.resources.Identifier LAST_STAND_HEALTH_ID = EndRing.id("end_ring_last_stand_health");
+	private static final net.minecraft.resources.Identifier BLOCK_REACH_ID = EndRing.id("end_ring_block_reach");
+	private static final net.minecraft.resources.Identifier ENTITY_REACH_ID = EndRing.id("end_ring_entity_reach");
+
+	// match creative-mode reach: +0.5 block range, +2.0 entity range (vanilla creative modifier values)
+	private static final double CREATIVE_BLOCK_REACH_BONUS = 0.5;
+	private static final double CREATIVE_ENTITY_REACH_BONUS = 2.0;
 
 	private static final int HURT_RESISTANCE_DURATION = 600;
 	private static final double LAST_STAND_MAX_HEALTH_BONUS = 20.0;
@@ -88,6 +94,7 @@ public final class EndRingEvents {
 			LAST_HEALTH.remove(player.getUUID());
 			removeDynamicArmor(player);
 			removeLastStand(player);
+			removeReach(player);
 			resetFlightSpeed(player);
 			return;
 		}
@@ -121,14 +128,14 @@ public final class EndRingEvents {
 			player.removeEffect(MobEffects.NIGHT_VISION);
 		}
 
-		if (player.isInWater()) {
-			refreshEffect(player, MobEffects.CONDUIT_POWER, 0);
-		} else if (player.hasEffect(MobEffects.CONDUIT_POWER)) {
+		if (player.hasEffect(MobEffects.CONDUIT_POWER)) {
 			player.removeEffect(MobEffects.CONDUIT_POWER);
 		}
 
 		float frac = player.getHealth() / player.getMaxHealth();
 		updateDynamicArmor(player, frac);
+
+		applyReach(player);
 
 		int strengthAmp = strengthAmplifier(frac);
 		if (strengthAmp >= 0) {
@@ -221,6 +228,37 @@ public final class EndRingEvents {
 		AttributeInstance armor = player.getAttribute(Attributes.ARMOR);
 		if (armor != null && armor.getModifier(DYNAMIC_ARMOR_ID) != null) {
 			armor.removeModifier(DYNAMIC_ARMOR_ID);
+		}
+	}
+
+	private static void applyReach(ServerPlayer player) {
+		applyReach(player, Attributes.BLOCK_INTERACTION_RANGE, BLOCK_REACH_ID, CREATIVE_BLOCK_REACH_BONUS);
+		applyReach(player, Attributes.ENTITY_INTERACTION_RANGE, ENTITY_REACH_ID, CREATIVE_ENTITY_REACH_BONUS);
+	}
+
+	private static void applyReach(ServerPlayer player, Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute,
+			net.minecraft.resources.Identifier id, double bonus) {
+		AttributeInstance instance = player.getAttribute(attribute);
+		if (instance == null) {
+			return;
+		}
+		AttributeModifier existing = instance.getModifier(id);
+		if (existing == null || existing.amount() != bonus) {
+			instance.removeModifier(id);
+			instance.addOrUpdateTransientModifier(new AttributeModifier(id, bonus, AttributeModifier.Operation.ADD_VALUE));
+		}
+	}
+
+	private static void removeReach(ServerPlayer player) {
+		removeReach(player, Attributes.BLOCK_INTERACTION_RANGE, BLOCK_REACH_ID);
+		removeReach(player, Attributes.ENTITY_INTERACTION_RANGE, ENTITY_REACH_ID);
+	}
+
+	private static void removeReach(ServerPlayer player, Holder<net.minecraft.world.entity.ai.attributes.Attribute> attribute,
+			net.minecraft.resources.Identifier id) {
+		AttributeInstance instance = player.getAttribute(attribute);
+		if (instance != null && instance.getModifier(id) != null) {
+			instance.removeModifier(id);
 		}
 	}
 
