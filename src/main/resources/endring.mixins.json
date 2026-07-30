@@ -16,7 +16,10 @@
 		"EnchantmentXpMixin",
 		"AnvilXpMixin",
 		"MobTargetMixin",
-		"RingArmourWearMixin"
+		"RingArmourWearMixin",
+		"AbilitiesMayflyMixin",
+		"GameModeChangeMixin",
+		"GameTypeUpdateAbilitiesMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

@@ -138,8 +138,12 @@ public final class EndRingEvents {
 	}
 
 	private static void applyWornEffects(ServerPlayer player) {
+		// mayfly is restored by AbilitiesMayflyMixin on every onUpdateAbilities() call, but that
+		// method only fires on gamemode change / join / respawn. The first tick the ring lands on the
+		// head nothing has triggered an abilities update yet, so the client would not see mayfly=true
+		// until the next vanilla trigger. Kick one off now - the mixin's HEAD injection then sets
+		// mayfly=true before the packet goes out, granting flight immediately.
 		if (!player.getAbilities().mayfly) {
-			player.getAbilities().mayfly = true;
 			player.onUpdateAbilities();
 		}
 
