@@ -32,6 +32,7 @@ public final class ModItems {
 			.add(Attributes.ARMOR, modifier("end_ring_armor", 3.0), EquipmentSlotGroup.HEAD)
 //			.add(Attributes.ARMOR_TOUGHNESS, modifier("end_ring_toughness", 1_000_000.0), EquipmentSlotGroup.HEAD)
 			.add(Attributes.ARMOR_TOUGHNESS, modifier("end_ring_toughness", 3.0), EquipmentSlotGroup.HEAD)
+			.add(Attributes.KNOCKBACK_RESISTANCE, modifier("end_ring_toughness", 0.1), EquipmentSlotGroup.HEAD)
 			.build();
 
 		Item.Properties properties = new Item.Properties()
