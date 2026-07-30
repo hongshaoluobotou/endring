@@ -6,6 +6,7 @@ import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.monster.cubemob.AbstractCubeMob;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -22,6 +23,13 @@ public abstract class DamageResistanceMixin {
 		}
 		if (endring$isImmune(source)) {
 			cir.setReturnValue(false);
+			return;
+		}
+		// The ring removes the player's own hurt-cooldown clamp so normal i-frames apply again. Slime-
+		// family attacks (slime, magma cube, sulfur cube) are the exception: clear the cooldown so they
+		// bypass i-frames and can deal damage every tick.
+		if (source.getEntity() instanceof AbstractCubeMob) {
+			player.invulnerableTime = 0;
 		}
 	}
 

@@ -115,8 +115,6 @@ public final class EndRingEvents {
 	}
 
 	private static void applyWornEffects(ServerPlayer player) {
-		player.invulnerableTime = Math.min(player.invulnerableTime, 1);
-
 		if (!player.getAbilities().mayfly) {
 			player.getAbilities().mayfly = true;
 			player.onUpdateAbilities();
