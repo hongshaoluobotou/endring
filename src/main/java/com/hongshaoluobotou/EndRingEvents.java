@@ -116,7 +116,7 @@ public final class EndRingEvents {
 
 	private static void tickTotemRegen(ServerPlayer player, ItemStack ring) {
 		UUID id = player.getUUID();
-		if (EndRingItem.getTotems(ring) >= EndRingItem.MAX_TOTEMS) {
+		if (EndRingItem.getTotems(ring) >= EndRingItem.maxTotems(ring)) {
 			TOTEM_REGEN.remove(id);
 			return;
 		}
@@ -184,9 +184,11 @@ public final class EndRingEvents {
 	}
 
 	// The lower the fraction of stored totems, the stronger the granted attributes/effects (a totem count
-	// of 0 yields fraction 0, MAX_TOTEMS yields 1).
+	// of 0 yields fraction 0, full totems yields 1).
 	private static float totemFraction(ServerPlayer player) {
-		return (float) EndRingItem.getTotems(EndRingItem.getWorn(player)) / EndRingItem.MAX_TOTEMS;
+		ItemStack ring = EndRingItem.getWorn(player);
+		int max = EndRingItem.maxTotems(ring);
+		return max <= 0 ? 0.0F : (float) EndRingItem.getTotems(ring) / max;
 	}
 
 	private static int resistanceAmplifier(float frac) {

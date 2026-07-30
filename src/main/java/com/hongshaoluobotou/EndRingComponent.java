@@ -5,29 +5,15 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.component.DataComponentGetter;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.component.TooltipProvider;
 
-import com.mojang.serialization.Codec;
-import com.mojang.serialization.codecs.RecordCodecBuilder;
+public record EndRingComponent() implements TooltipProvider {
+	public static final EndRingComponent DEFAULT = new EndRingComponent();
 
-public record EndRingComponent(int storedTotems) implements TooltipProvider {
-	public static final EndRingComponent DEFAULT = new EndRingComponent(0);
-	public static final EndRingComponent FULL = new EndRingComponent(EndRingItem.MAX_TOTEMS);
-
-	public static final Codec<EndRingComponent> CODEC = RecordCodecBuilder.create(instance ->
-		instance.group(
-			Codec.intRange(0, EndRingItem.MAX_TOTEMS).fieldOf("storedTotems").forGetter(EndRingComponent::storedTotems)
-		).apply(instance, EndRingComponent::new)
-	);
-
-	public static final StreamCodec<RegistryFriendlyByteBuf, EndRingComponent> STREAM_CODEC = StreamCodec.composite(
-		ByteBufCodecs.VAR_INT, EndRingComponent::storedTotems,
-		EndRingComponent::new
-	);
+	public static final StreamCodec<RegistryFriendlyByteBuf, EndRingComponent> STREAM_CODEC = StreamCodec.unit(DEFAULT);
 
 	@Override
 	public void addToTooltip(Item.TooltipContext context, Consumer<Component> tooltip, TooltipFlag flag, DataComponentGetter getter) {

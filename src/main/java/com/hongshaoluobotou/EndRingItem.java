@@ -10,10 +10,17 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
 public class EndRingItem extends Item {
-	public static final int MAX_TOTEMS = 8;
 	public static final int TOTEM_REGEN_TICKS = 600;
 
 	static final int LORE_LINES = 5;
+
+	// Vanilla DAMAGE drives everything: the durability bar, Unbreaking, Mending, isDamaged — the same
+	// way they work for any tool. We just mirror totems into it: with maxDamage N the ring holds
+	// (N - 1) totems at fresh, and one point of damage is always kept in reserve so the bar keeps
+	// showing a sliver when totems run out. The ring never reaches its own maxDamage, which keeps it
+	// out of vanilla's break-and-shrink path. maxDamage is itself a vanilla DataComponent, so a
+	// {MaxDamage:100} NBT tag on the stack is honoured the same way as for any other item.
+	public static final int MAX_DAMAGE = 9;
 
 	public EndRingItem(Properties properties) {
 		super(properties);
@@ -81,35 +88,41 @@ public class EndRingItem extends Item {
 		}
 	}
 
-	// Totems are mirrored into vanilla DAMAGE: damage = MAX_TOTEMS - totems. MAX_DAMAGE is MAX_TOTEMS + 1
-	// so the bar at the bottom (totems=0, damage=MAX_TOTEMS) still shows one notch of width — we never
-	// reach MAX_DAMAGE itself, which keeps the ring out of vanilla's break-and-shrink path while still
-	// driving the durability bar, Unbreaking, Mending, and ItemStack::isDamaged uniformly.
-	public static final int MAX_DAMAGE = MAX_TOTEMS + 1;
+	public static int getMaxDamage(ItemStack ring) {
+		int max = ring.getMaxDamage();
+		return max > 0 ? max : MAX_DAMAGE;
+	}
+
+	public static int maxTotems(ItemStack ring) {
+		return Math.max(0, getMaxDamage(ring) - 1);
+	}
+
 	public static int getTotems(ItemStack ring) {
-		return Math.max(0, MAX_TOTEMS - ring.getDamageValue());
+		return Math.max(0, maxTotems(ring) - ring.getDamageValue());
 	}
 
 	public static void setTotems(ItemStack ring, int count) {
-		int damage = Math.max(0, MAX_TOTEMS - Math.clamp(count, 0, MAX_TOTEMS));
+		int max = maxTotems(ring);
+		int damage = Math.max(0, max - Math.clamp(count, 0, max));
 		ring.setDamageValue(damage);
 	}
 
 	// Consume one totem for a fatal hit, honouring the Unbreaking enchantment: Unbreaking is given a
 	// chance to spare the totem entirely (the same way vanilla tools gain durability). Returns true when
-	// a totem was actually spent. The ring never breaks: damage is clamped below MAX_DAMAGE.
+	// a totem was actually spent. The ring never breaks: damage is clamped below maxDamage.
 	public static boolean consumeTotem(ServerPlayer player, ItemStack ring) {
 		if (getTotems(ring) <= 0) {
 			return false;
 		}
 		// Run the Unbreaking pass the same way vanilla tools do, then write the new damage directly. A
 		// direct setDamageValue cannot shrink the stack (ItemStack only shrinks inside applyDamage), so
-		// the ring is safe at the upper end even though we momentarily reach MAX_DAMAGE on paper.
+		// the ring is safe at the upper end even though we momentarily reach maxDamage on paper.
 		int cost = net.minecraft.world.item.enchantment.EnchantmentHelper.processDurabilityChange(player.level(), ring, 1);
 		if (cost <= 0) {
 			return true;
 		}
-		ring.setDamageValue(Math.min(ring.getDamageValue() + cost, MAX_DAMAGE - 1));
+		int maxDamage = getMaxDamage(ring);
+		ring.setDamageValue(Math.min(ring.getDamageValue() + cost, maxDamage - 1));
 		return true;
 	}
 

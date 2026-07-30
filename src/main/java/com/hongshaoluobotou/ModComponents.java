@@ -9,7 +9,6 @@ public final class ModComponents {
 		BuiltInRegistries.DATA_COMPONENT_TYPE,
 		EndRing.id("end_ring"),
 		DataComponentType.<EndRingComponent>builder()
-			.persistent(EndRingComponent.CODEC)
 			.networkSynchronized(EndRingComponent.STREAM_CODEC)
 			.build()
 	);

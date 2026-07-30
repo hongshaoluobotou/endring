@@ -39,7 +39,7 @@ public final class ModItems {
 			.attributes(attributes)
 			.setId(END_RING_KEY)
 			.durability(EndRingItem.MAX_DAMAGE)
-			.component(ModComponents.END_RING, EndRingComponent.FULL)
+			.component(ModComponents.END_RING, EndRingComponent.DEFAULT)
 			.delayedComponent(DataComponents.ENCHANTMENTS, context -> {
 				ItemEnchantments.Mutable enchantments = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
 				enchantments.set(context.getOrThrow(Enchantments.BINDING_CURSE), 1);
