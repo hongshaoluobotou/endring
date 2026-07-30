@@ -3,7 +3,6 @@
 	"package": "com.hongshaoluobotou.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
-		"RangedAttributeMixin",
 		"CombatRulesMixin",
 		"KillCommandMixin",
 		"CreativeMiningMixin",
