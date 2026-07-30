@@ -14,7 +14,8 @@
 		"HeadSlotLockMixin",
 		"InventoryHeadLockMixin",
 		"EnchantmentXpMixin",
-		"AnvilXpMixin"
+		"AnvilXpMixin",
+		"MobTargetMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
