@@ -92,14 +92,14 @@ public abstract class DamageResistanceMixin {
 		return source.is(DamageTypeTags.IS_FIRE)
 			|| source.is(DamageTypeTags.IS_FALL)
 			|| source.is(DamageTypeTags.IS_EXPLOSION)
-			|| source.is(DamageTypes.CACTUS)
-			|| source.is(DamageTypes.IN_WALL);
+			|| source.is(DamageTypes.CACTUS);
 	}
 
 	private static boolean endring$isReduced(DamageSource source) {
 		return source.is(DamageTypes.SWEET_BERRY_BUSH)
 			|| source.is(DamageTypeTags.IS_FREEZING)
 			|| source.is(DamageTypeTags.IS_PROJECTILE)
+			|| source.is(DamageTypes.IN_WALL)
 			|| endring$isMelee(source)
 			|| endring$isMagic(source);
 	}
