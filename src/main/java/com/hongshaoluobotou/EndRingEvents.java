@@ -73,6 +73,10 @@ public final class EndRingEvents {
 
 		ServerLivingEntityEvents.AFTER_DAMAGE.register((entity, source, baseDamage, damageTaken, blocked) -> {
 			if (entity instanceof ServerPlayer player && !EndRingItem.getWorn(player).isEmpty() && !DragonDeath.isPlaying(player)) {
+				if (source.getEntity() instanceof LivingEntity attacker) {
+					EndRingSummons.recordLastHurtBy(player, attacker);
+				}
+				EndRingSummons.onDamaged(player, damageTaken);
 				onDamaged(player);
 			}
 		});
@@ -100,6 +104,7 @@ public final class EndRingEvents {
 		if (ring.isEmpty()) {
 			LAST_HEALTH.remove(player.getUUID());
 			TOTEM_REGEN.remove(player.getUUID());
+			EndRingSummons.onRingRemoved(player);
 			removeDynamicArmor(player);
 			removeLastStand(player);
 			removeReach(player);
@@ -112,6 +117,7 @@ public final class EndRingEvents {
 		applyWornEffects(player);
 		tickFlightBoost(player);
 		tickTotemRegen(player, ring);
+		EndRingSummons.onPlayerTick(player);
 	}
 
 	private static void tickTotemRegen(ServerPlayer player, ItemStack ring) {
