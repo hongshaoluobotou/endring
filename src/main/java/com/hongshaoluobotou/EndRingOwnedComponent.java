@@ -34,6 +34,17 @@ public final class EndRingOwnedComponent {
 	}
 
 	/**
+	 * Resolves the owner UUID stamped on the mob, or {@code null} if the mob has no marker. Cheap
+	 * (one NBT read, no level / server lookup), safe to call from hot mixin paths. Used by the
+	 * targeting mixin to check "is this target the summoner's owner" without going through
+	 * {@link #getOwner} (which would force a player lookup and resolve a specific player instance,
+	 * including the wearer's mob if it is the only one online).
+	 */
+	public static UUID getOwnerUuid(Mob mob) {
+		return readOwnerUuid(mob);
+	}
+
+	/**
 	 * Resolves the owner as a living entity. Returns {@code null} if the mob has no owner marker,
 	 * the owner is offline, or the owner isn't loaded.
 	 */
