@@ -14,12 +14,10 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.monster.Vex;
-import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.phys.AABB;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * End Ring summon manager. As the ring's stored totems run low the ring bleeds the wearer's hp to
@@ -432,10 +430,9 @@ public final class EndRingSummons {
 		}
 		int toSpawn = Math.min(count, free);
 		BlockPos pos = player.blockPosition();
-		BlockPos.MutableBlockPos spawnAt = new BlockPos.MutableBlockPos();
 		for (int i = 0; i < toSpawn; i++) {
-			spawnAt.set(pos.getX() + level.getRandom().nextInt(3) - 1, pos.getY() + 1, pos.getZ() + level.getRandom().nextInt(3) - 1);
-			T mob = type.spawn(level, spawnAt, EntitySpawnReason.MOB_SUMMONED);
+			BlockPos spawnAt = findSafeSpawn(level, pos);
+			T mob = type.spawn(level, spawnAt.immutable(), EntitySpawnReason.MOB_SUMMONED);
 			if (mob == null) {
 				continue;
 			}
@@ -444,6 +441,51 @@ public final class EndRingSummons {
 			// follow mixins in mixin/ take over - no goal selector rewriting is done.
 			EndRingOwnedComponent.setOwner(mob, player);
 			list.add(mob);
+		}
+		return true;
+	}
+
+	/**
+	 * Try to place the mob where the player is standing (one block above their feet) when
+	 * the two-block headroom is clear. If anything is in the way - a slab, a torch, a
+	 * partial cover - fall back to scanning the 3x3 around the player for a spot that has
+	 * a solid floor underneath and air at foot/head level. If nothing in that ring works,
+	 * spawn at the player's own position so we still produce the entity rather than
+	 * silently dropping a summon.
+	 */
+	private static BlockPos findSafeSpawn(ServerLevel level, BlockPos playerPos) {
+		int[][] deltas = {
+			{0, 0},
+			{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+			{1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+		};
+		for (int[] d : deltas) {
+			int x = playerPos.getX() + d[0];
+			int z = playerPos.getZ() + d[1];
+			int y = playerPos.getY() + 1;
+			if (isSafeSpawnSpot(level, x, y, z)) {
+				return new BlockPos(x, y, z);
+			}
+		}
+		return new BlockPos(playerPos.getX(), playerPos.getY() + 1, playerPos.getZ());
+	}
+
+	private static boolean isSafeSpawnSpot(ServerLevel level, int x, int y, int z) {
+		BlockPos feet = new BlockPos(x, y, z);
+		BlockPos head = new BlockPos(x, y + 1, z);
+		BlockPos floor = new BlockPos(x, y - 1, z);
+		if (level.getFluidState(feet).isEmpty() ? !level.getBlockState(feet).isAir() : !level.getFluidState(feet).isSource()) {
+			return false;
+		}
+		if (level.getFluidState(head).isEmpty() ? !level.getBlockState(head).isAir() : !level.getFluidState(head).isSource()) {
+			return false;
+		}
+		BlockState floorState = level.getBlockState(floor);
+		if (floorState.isAir()) {
+			return false;
+		}
+		if (!floorState.blocksMotion()) {
+			return false;
 		}
 		return true;
 	}
