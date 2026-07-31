@@ -278,13 +278,13 @@ public final class EndRingSummons {
 		int zombieCap = capForFrac(ZOMBIE_CAPS, ZOMBIE_CAPS_VALUES, frac);
 
 		if (frac < 0.1F) {
-			spendPool(player, PENDING_VEX_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> spawnVexes(player, spawns, vexCap));
+			spendPool(player, PENDING_VEX_DAMAGE_ULTRA_LIGHT, id, 0.3F, spawns -> spawnVexes(player, spawns, vexCap));
 		} else {
 			PENDING_VEX_DAMAGE_ULTRA_LIGHT.remove(id);
 		}
 
 		if (frac < 0.2F) {
-			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 1.0F, spawns -> spawnVexes(player, spawns, vexCap));
+			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 0.7F, spawns -> spawnVexes(player, spawns, vexCap));
 		} else {
 			PENDING_VEX_DAMAGE_LIGHT.remove(id);
 		}
@@ -431,7 +431,7 @@ public final class EndRingSummons {
 	// -----------------------------------------------------------------------
 
 	private static boolean spawnVexes(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.VEX, Vex.class, count, cap, EndRingSummons::configureVex);
+		return spawn(player, EntityTypes.VEX, Vex.class, count, cap, EndRingSummons::configureVex, VEX_POLICY);
 	}
 
 	private static boolean spawnKillerBunnies(ServerPlayer player, int count, int cap) {
@@ -441,20 +441,32 @@ public final class EndRingSummons {
 			// in its setVariant method, so the rabbit actually fights back. The targeting mixin
 			// then blocks the auto-acquired Player target.
 			((RabbitVariantAccessor) mob).endring$setVariant(Rabbit.Variant.EVIL);
-		});
+		}, RABBIT_POLICY);
 	}
 
 	private static boolean spawnZombies(ServerPlayer player, int count, int cap) {
 		return spawn(player, EntityTypes.ZOMBIE, Zombie.class, count, cap, (level, mob) -> {
-		});
+		}, ZOMBIE_POLICY);
 	}
+
+	// Vexes fly, so the "is there a solid floor under their feet" check is irrelevant - they hover
+	// independently of the block below. We only need feet+head to not be jammed by a solid.
+	private static final SpawnPolicy VEX_POLICY = new SpawnPolicy(false, false);
+	// Rabbits are 0.5 blocks tall and have a small hitbox; they fit anywhere a 1-block-tall pocket
+	// has air at foot level and a solid below. The head clearance check is unnecessary.
+	private static final SpawnPolicy RABBIT_POLICY = new SpawnPolicy(true, true);
+	// Zombies are 1.95 blocks tall and need the full 2-block clearance plus a solid floor.
+	private static final SpawnPolicy ZOMBIE_POLICY = new SpawnPolicy(true, false);
 
 	@FunctionalInterface
 	private interface MobConfigurator {
 		void configure(ServerLevel level, Mob mob);
 	}
 
-	private static <T extends Mob> boolean spawn(ServerPlayer player, EntityType<T> type, Class<T> typeClass, int count, int typeCap, MobConfigurator config) {
+	private record SpawnPolicy(boolean needsSolidFloor, boolean oneBlockTall) {
+	}
+
+	private static <T extends Mob> boolean spawn(ServerPlayer player, EntityType<T> type, Class<T> typeClass, int count, int typeCap, MobConfigurator config, SpawnPolicy policy) {
 		if (count <= 0) {
 			return true;
 		}
@@ -474,7 +486,7 @@ public final class EndRingSummons {
 		int toSpawn = Math.min(count, free);
 		BlockPos pos = player.blockPosition();
 		for (int i = 0; i < toSpawn; i++) {
-			BlockPos spawnAt = findSafeSpawn(level, pos);
+			BlockPos spawnAt = findSafeSpawn(level, pos, policy);
 			T mob = type.spawn(level, spawnAt.immutable(), EntitySpawnReason.MOB_SUMMONED);
 			if (mob == null) {
 				continue;
@@ -489,48 +501,116 @@ public final class EndRingSummons {
 	}
 
 	/**
-	 * Try to place the mob where the player is standing (one block above their feet) when
-	 * the two-block headroom is clear. If anything is in the way - a slab, a torch, a
-	 * partial cover - fall back to scanning the 3x3 around the player for a spot that has
-	 * a solid floor underneath and air at foot/head level. If nothing in that ring works,
-	 * spawn at the player's own position so we still produce the entity rather than
-	 * silently dropping a summon.
+	 * Try to place the mob in a sane pocket of space.
+	 * <ul>
+	 *   <li>Vex (no safety): just drop it one block above the player; flying mobs can sort
+	 *       themselves out of walls on their own.</li>
+	 *   <li>Otherwise scan the 3x3 around the player (player cell first) for a spot whose
+	 *       feet block is air or a source fluid, whose head block is air or a source fluid
+	 *       (or skip the head check for one-block-tall mobs like rabbits), and which has a
+	 *       solid floor underneath (when the policy requires a solid floor).</li>
+	 *   <li>Two distinct degenerate cases get dedicated fallbacks rather than the
+	 *       "spawn at player pos" crutch:
+	 *     <ul>
+	 *       <li>If every scanned cell fails because the <em>floor is air/water</em>
+	 *           (i.e. the player is standing over open air / water with nothing to
+	 *           stand on nearby) the caller is floating in featureless space; pick a
+	 *           random cell in the 3x3 and place the mob there regardless of floor.</li>
+	 *       <li>If every scanned cell fails because the <em>feet cell is already
+	 *           occupied</em> by a solid block, the player is boxed in; fall back to
+	 *           the player's own position (feet+1) so the summon still appears on
+	 *           the player rather than vanishing.</li>
+	 *     </ul>
+	 *   </li>
+	 * </ul>
 	 */
-	private static BlockPos findSafeSpawn(ServerLevel level, BlockPos playerPos) {
-		int[][] deltas = {
-			{0, 0},
-			{1, 0}, {-1, 0}, {0, 1}, {0, -1},
-			{1, 1}, {1, -1}, {-1, 1}, {-1, -1}
-		};
+	private static BlockPos findSafeSpawn(ServerLevel level, BlockPos playerPos, SpawnPolicy policy) {
+		BlockPos headHeight = new BlockPos(playerPos.getX(), playerPos.getY(), playerPos.getZ());
+		if (!policy.needsSolidFloor()) {
+			// Vex - no safety check whatsoever; park it one block above the player.
+			return headHeight;
+		}
+		int[][] deltas = new int[25][];
+		int idx = 0;
+		for (int dx = -2; dx <= 2; dx++) {
+			for (int dz = -2; dz <= 2; dz++) {
+				deltas[idx++] = new int[]{dx, dz};
+			}
+		}
+		boolean anyFeetBlocked = false;
+		boolean anyFloorOpen = false;
 		for (int[] d : deltas) {
 			int x = playerPos.getX() + d[0];
 			int z = playerPos.getZ() + d[1];
 			int y = playerPos.getY() + 1;
-			if (isSafeSpawnSpot(level, x, y, z)) {
+			SpotResult r = classifySpot(level, x, y, z, policy);
+			if (r == SpotResult.OK) {
 				return new BlockPos(x, y, z);
 			}
+			if (r == SpotResult.FEET_BLOCKED) {
+				anyFeetBlocked = true;
+			} else if (r == SpotResult.FLOOR_OPEN) {
+				anyFloorOpen = true;
+			}
 		}
-		return new BlockPos(playerPos.getX(), playerPos.getY() + 1, playerPos.getZ());
+		// If every candidate failed because there was nowhere to stand (floor open everywhere),
+		// random-pick a cell in the ring and drop the mob there. The Y is also jittered inside a
+		// small band around the player's head so the swarm spreads out vertically instead of
+		// stacking on the same slab. The cell's feet block must still be passable - otherwise the
+		// mob would be wedged inside a wall - so we re-roll until we find a passable pick. If no
+		// passable random pick can be found, fall back to the player's own coordinates so the
+		// summon still appears on the player rather than vanishing.
+		if (!anyFeetBlocked && anyFloorOpen) {
+			BlockPos fallback = headHeight;
+			for (int attempt = 0; attempt < 8; attempt++) {
+				int[] pick = deltas[level.getRandom().nextInt(deltas.length)];
+				int x = playerPos.getX() + pick[0];
+				int z = playerPos.getZ() + pick[1];
+				int yOffset = level.getRandom().nextInt(3) - 1; // -1, 0, +1
+				int y = playerPos.getY() + 1 + yOffset;
+				if (isPassable(level, new BlockPos(x, y, z))) {
+					return new BlockPos(x, y, z);
+				}
+			}
+			return fallback;
+		}
+		// Otherwise (some feet were blocked, possibly mixed) spawn on the player so the
+		// summon still materialises rather than silently disappearing.
+		return headHeight;
 	}
 
-	private static boolean isSafeSpawnSpot(ServerLevel level, int x, int y, int z) {
+	private enum SpotResult {
+		OK,
+		FEET_BLOCKED,
+		FLOOR_OPEN
+	}
+
+	private static SpotResult classifySpot(ServerLevel level, int x, int y, int z, SpawnPolicy policy) {
 		BlockPos feet = new BlockPos(x, y, z);
-		BlockPos head = new BlockPos(x, y + 1, z);
-		BlockPos floor = new BlockPos(x, y - 1, z);
-		if (level.getFluidState(feet).isEmpty() ? !level.getBlockState(feet).isAir() : !level.getFluidState(feet).isSource()) {
-			return false;
+		if (!isPassable(level, feet)) {
+			return SpotResult.FEET_BLOCKED;
 		}
-		if (level.getFluidState(head).isEmpty() ? !level.getBlockState(head).isAir() : !level.getFluidState(head).isSource()) {
-			return false;
+		if (!policy.oneBlockTall()) {
+			BlockPos head = new BlockPos(x, y + 1, z);
+			if (!isPassable(level, head)) {
+				return SpotResult.FEET_BLOCKED;
+			}
 		}
-		BlockState floorState = level.getBlockState(floor);
-		if (floorState.isAir()) {
-			return false;
+		if (policy.needsSolidFloor()) {
+			BlockPos floor = new BlockPos(x, y - 1, z);
+			BlockState floorState = level.getBlockState(floor);
+			if (floorState.isAir() || !floorState.blocksMotion()) {
+				return SpotResult.FLOOR_OPEN;
+			}
 		}
-		if (!floorState.blocksMotion()) {
-			return false;
+		return SpotResult.OK;
+	}
+
+	private static boolean isPassable(ServerLevel level, BlockPos pos) {
+		if (level.getFluidState(pos).isSource()) {
+			return true;
 		}
-		return true;
+		return level.getBlockState(pos).isAir();
 	}
 
 	private static void configureVex(ServerLevel level, Mob mob) {
