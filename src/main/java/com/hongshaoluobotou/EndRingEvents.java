@@ -340,6 +340,36 @@ public final class EndRingEvents {
 		}
 		return -1;
 	}
+	private static double dynamicResistanceReducedBonus(float frac) {
+		if (frac < 0.10F) {
+			return 0.9;
+		}
+		if (frac < 0.20F) {
+			return 0.8;
+		}
+		if (frac < 0.30F) {
+			return 0.7;
+		}
+		if (frac < 0.40F) {
+			return 0.6;
+		}
+		if (frac < 0.50F) {
+			return 0.5;
+		}
+		if (frac < 0.60F) {
+			return 0.4;
+		}
+		if (frac < 0.70F) {
+			return 0.3;
+		}
+		if (frac < 0.80F) {
+			return 0.2;
+		}
+		if (frac < 0.90F) {
+			return 0.1;
+		}
+		return -1;
+	}
 
 	private static void updateDynamicArmor(ServerPlayer player, float frac) {
 		updateModifier(player, Attributes.ARMOR, DYNAMIC_ARMOR_ID, dynamicArmorBonus(frac));

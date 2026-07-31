@@ -16,13 +16,21 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.monster.Vex;
+import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * End Ring summon manager. As the ring's stored totems run low the ring bleeds the wearer's hp to
- * spawn vexes (frac &lt; 0.1 / 0.2), killer bunnies (frac &lt; 0.3 / 0.4) and zombies (frac &lt; 0.5 /
- * 0.6 / 0.7 / 0.8 / 0.9).
+ * spawn vexes (frac &lt; 0.1 / 0.2 / 0.3), killer bunnies (frac &lt; 0.3 / 0.4), and zombies
+ * (frac &lt; 0.5 / 0.6 / 0.7 / 0.8 / 0.9). At any frac, every pool that passes its threshold can
+ * fire in parallel, so a low-frac player can have a mixed swarm of vexes + bunnies + zombies
+ * simultaneously, capped per-mob-type.
+ *
+ * <p>Per-mob-type caps scale with frac: the lower the ring's totems, the more of each mob type
+ * we let pile up, so the swarm actually gets dense right when the player needs it most. Cost
+ * per spawn also drops with frac (cheaper pools at lower frac), so less hp is needed to spawn
+ * each unit.
  *
  * <p>Each spawned mob is tagged with the owner's UUID via {@link EndRingOwnedComponent}. The
  * marker is written in {@link #spawn} after the entity is constructed; from that point on the
@@ -45,6 +53,7 @@ import net.minecraft.world.level.block.state.BlockState;
 public final class EndRingSummons {
 	// Per-tier damage accumulator. The ring "spends" hp at these rates; residue carries into the
 	// next tick so a single big hit can trigger multiple tiers in one go.
+	private static final Map<UUID, Float> PENDING_VEX_DAMAGE_ULTRA_LIGHT = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_VEX_DAMAGE_LIGHT = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_VEX_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_BUNNY_DAMAGE_LIGHT = new HashMap<>();
@@ -107,7 +116,7 @@ public final class EndRingSummons {
 		if (frac < 0.1F) {
 			int timer = VEX_AUTO_TIMER.getOrDefault(id, 0) + 1;
 			if (timer >= VEX_AUTO_INTERVAL_TICKS) {
-				spawnVexes(player, 3, 20);
+				spawnVexes(player, 3, capForFrac(VEX_CAPS, VEX_CAPS_VALUES, frac));
 				VEX_AUTO_TIMER.put(id, 0);
 			} else {
 				VEX_AUTO_TIMER.put(id, timer);
@@ -129,6 +138,7 @@ public final class EndRingSummons {
 			return;
 		}
 		UUID id = player.getUUID();
+		PENDING_VEX_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
 		PENDING_VEX_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
 		PENDING_VEX_DAMAGE.merge(id, damageTaken, Float::sum);
 		PENDING_BUNNY_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
@@ -256,77 +266,103 @@ public final class EndRingSummons {
 	private static void consumePools(ServerPlayer player, float frac) {
 		UUID id = player.getUUID();
 
+		// Each pool is a separate channel with its own frac gate, cost-per-spawn, and per-mob-type
+		// cap. Multiple pools can fire in the same tick - e.g. at frac=0.25 the light vex, the
+		// heavy vex, and the light bunny pools all drain in parallel, so the player can end up
+		// with vexes and killer bunnies side-by-side. Per-mob-type caps scale with frac: the
+		// lower the ring's totems, the more of each mob type we let pile up, so the swarm
+		// actually gets dense right when the player needs it most.
+
+		int vexCap = capForFrac(VEX_CAPS, VEX_CAPS_VALUES, frac);
+		int bunnyCap = capForFrac(BUNNY_CAPS, BUNNY_CAPS_VALUES, frac);
+		int zombieCap = capForFrac(ZOMBIE_CAPS, ZOMBIE_CAPS_VALUES, frac);
+
 		if (frac < 0.1F) {
-			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 1.0F, EndRingSummons::spawnVexes, 24);
+			spendPool(player, PENDING_VEX_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> spawnVexes(player, spawns, vexCap));
+		} else {
+			PENDING_VEX_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 1.0F, spawns -> spawnVexes(player, spawns, vexCap));
 		} else {
 			PENDING_VEX_DAMAGE_LIGHT.remove(id);
 		}
 
-		if (frac < 0.2F) {
-			spendPool(player, PENDING_VEX_DAMAGE, id, 1.5F, EndRingSummons::spawnVexes, 12);
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_VEX_DAMAGE, id, 1.5F, spawns -> spawnVexes(player, spawns, vexCap));
 		} else {
 			PENDING_VEX_DAMAGE.remove(id);
 		}
 
 		if (frac < 0.3F) {
-			spendPool(player, PENDING_BUNNY_DAMAGE_LIGHT, id, 1.5F, EndRingSummons::spawnKillerBunnies, 18);
+			spendPool(player, PENDING_BUNNY_DAMAGE_LIGHT, id, 1.5F, spawns -> spawnKillerBunnies(player, spawns, bunnyCap));
 		} else {
 			PENDING_BUNNY_DAMAGE_LIGHT.remove(id);
 		}
 
 		if (frac < 0.4F) {
-			spendPool(player, PENDING_BUNNY_DAMAGE, id, 2.0F, EndRingSummons::spawnKillerBunnies, 9);
+			spendPool(player, PENDING_BUNNY_DAMAGE, id, 2.0F, spawns -> spawnKillerBunnies(player, spawns, bunnyCap));
 		} else {
 			PENDING_BUNNY_DAMAGE.remove(id);
 		}
 
 		if (frac < 0.5F) {
-			float pool = PENDING_ZOMBIE_DAMAGE_FOUR.getOrDefault(id, 0.0F);
-			if (pool >= 4.0F) {
-				int spawns = (int) (pool / 4.0F);
-				if (spawnZombies(player, spawns * 2, 12)) {
-					pool -= spawns * 4.0F;
-					PENDING_ZOMBIE_DAMAGE_FOUR.put(id, pool);
-				}
-			}
+			spendPool(player, PENDING_ZOMBIE_DAMAGE_FOUR, id, 4.0F, spawns -> spawnZombies(player, spawns * 2, zombieCap));
 		} else {
 			PENDING_ZOMBIE_DAMAGE_FOUR.remove(id);
 		}
 
-		// 0.6 / 0.7 / 0.8 / 0.9 zombie tiers all draw from the same PENDING_ZOMBIE_DAMAGE pool,
-		// in order of cost. The cheapest active tier drains the pool first, then the next tier,
-		// and so on. The pool is only cleared once the player crosses the strictest threshold
-		// (0.9) - otherwise the frac < 0.6 else-branch would wipe the pool the moment the
-		// player crossed 0.6 and the higher tiers would never fire.
+		// Zombie hp tiers 0.6 / 0.7 / 0.8 / 0.9 all draw from the same PENDING_ZOMBIE_DAMAGE
+		// pool, cheapest first. The pool is only cleared once the player crosses 0.9 - otherwise
+		// the frac < 0.6 else-branch would wipe the pool the moment the player crossed 0.6 and
+		// the higher tiers would never fire.
 		if (frac < 0.6F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 4.0F, EndRingSummons::spawnZombies, 9);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 4.0F, spawns -> spawnZombies(player, spawns, zombieCap));
 		}
 		if (frac < 0.7F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 8.0F, EndRingSummons::spawnZombies, 6);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 8.0F, spawns -> spawnZombies(player, spawns, zombieCap));
 		}
 		if (frac < 0.8F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 12.0F, EndRingSummons::spawnZombies, 4);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 12.0F, spawns -> spawnZombies(player, spawns, zombieCap));
 		}
 		if (frac < 0.9F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 16.0F, EndRingSummons::spawnZombies, 3);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 16.0F, spawns -> spawnZombies(player, spawns, zombieCap));
 		}
 		if (frac >= 0.9F) {
 			PENDING_ZOMBIE_DAMAGE.remove(id);
 		}
 	}
 
-	@FunctionalInterface
-	private interface Spawner {
-		boolean spawn(ServerPlayer player, int count, int cap);
+	/**
+	 * Per-mob-type cap ladder. The first threshold &le; frac gives the cap. The tables are
+	 * ordered most-permissive (lowest frac) first. The cap is the *total* for that mob type
+	 * across every tier that fires at that frac - so a player at frac=0.05 can hold up to 60
+	 * vexes combined across all three vex tiers, while a player at frac=0.45 only gets 18.
+	 */
+	private static final float[] VEX_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] VEX_CAPS_VALUES = {60, 48, 36, 18, 0};
+	private static final float[] BUNNY_CAPS = {0.3F, 0.4F, 0.5F, 1.0F};
+	private static final int[] BUNNY_CAPS_VALUES = {45, 27, 9, 0};
+	private static final float[] ZOMBIE_CAPS = {0.5F, 0.6F, 0.8F, 1.0F};
+	private static final int[] ZOMBIE_CAPS_VALUES = {24, 12, 6, 0};
+
+	private static int capForFrac(float[] thresholds, int[] values, float frac) {
+		for (int i = 0; i < thresholds.length; i++) {
+			if (frac < thresholds[i]) {
+				return values[i];
+			}
+		}
+		return 0;
 	}
 
-	private static void spendPool(ServerPlayer player, Map<UUID, Float> pool, UUID id, float costPerSpawn, Spawner spawner, int cap) {
+	private static void spendPool(ServerPlayer player, Map<UUID, Float> pool, UUID id, float costPerSpawn, java.util.function.IntFunction<Boolean> spawnFn) {
 		float current = pool.getOrDefault(id, 0.0F);
 		if (current < costPerSpawn) {
 			return;
 		}
 		int spawns = (int) (current / costPerSpawn);
-		if (spawner.spawn(player, spawns, cap)) {
+		if (spawnFn.apply(spawns)) {
 			pool.put(id, current - spawns * costPerSpawn);
 		}
 	}
@@ -347,6 +383,7 @@ public final class EndRingSummons {
 				}
 			}
 		}
+		PENDING_VEX_DAMAGE_ULTRA_LIGHT.remove(id);
 		PENDING_VEX_DAMAGE_LIGHT.remove(id);
 		PENDING_VEX_DAMAGE.remove(id);
 		PENDING_BUNNY_DAMAGE_LIGHT.remove(id);
@@ -394,11 +431,11 @@ public final class EndRingSummons {
 	// -----------------------------------------------------------------------
 
 	private static boolean spawnVexes(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.VEX, count, cap, EndRingSummons::configureVex);
+		return spawn(player, EntityTypes.VEX, Vex.class, count, cap, EndRingSummons::configureVex);
 	}
 
 	private static boolean spawnKillerBunnies(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.RABBIT, count, cap, (level, mob) -> {
+		return spawn(player, EntityTypes.RABBIT, Rabbit.class, count, cap, (level, mob) -> {
 			// setVariant is private in vanilla; the accessor mixin exposes it. The EVIL variant
 			// installs MeleeAttackGoal + HurtByTargetGoal + NearestAttackableTargetGoal<Player/Wolf>
 			// in its setVariant method, so the rabbit actually fights back. The targeting mixin
@@ -408,7 +445,7 @@ public final class EndRingSummons {
 	}
 
 	private static boolean spawnZombies(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.ZOMBIE, count, cap, (level, mob) -> {
+		return spawn(player, EntityTypes.ZOMBIE, Zombie.class, count, cap, (level, mob) -> {
 		});
 	}
 
@@ -417,14 +454,20 @@ public final class EndRingSummons {
 		void configure(ServerLevel level, Mob mob);
 	}
 
-	private static <T extends Mob> boolean spawn(ServerPlayer player, EntityType<T> type, int count, int cap, MobConfigurator config) {
+	private static <T extends Mob> boolean spawn(ServerPlayer player, EntityType<T> type, Class<T> typeClass, int count, int typeCap, MobConfigurator config) {
 		if (count <= 0) {
 			return true;
 		}
 		ServerLevel level = player.level();
 		List<LivingEntity> list = SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>());
 		list.removeIf(e -> !LOADED.test(e));
-		int free = cap - list.size();
+		int ofType = 0;
+		for (LivingEntity e : list) {
+			if (typeClass.isInstance(e)) {
+				ofType++;
+			}
+		}
+		int free = typeCap - ofType;
 		if (free <= 0) {
 			return false;
 		}
