@@ -1,6 +1,7 @@
 package com.hongshaoluobotou.mixin;
 
 import com.hongshaoluobotou.DragonDeath;
+import com.hongshaoluobotou.EndRingEvents;
 import com.hongshaoluobotou.EndRingItem;
 import java.util.HashMap;
 import java.util.Map;
@@ -91,9 +92,24 @@ public abstract class DamageResistanceMixin {
 			return 3.0F;
 		}
 		if (endring$isReduced(source)) {
-			return damage * 0.2F;
+			// End Ring's reserved-totem-fraction-driven damage reduction: the closer the wearer is to a
+			// full ring of totems, the more damage bleeds through. At < 0.10F (nearly empty) the wearer
+			// takes 10% of the hit; at < 0.90F they take 90%; at or above 0.90F no reduction applies and
+			// the hit is passed through unchanged. The ladder matches dynamicResistanceReducedBonus in
+			// EndRingEvents, which is the canonical "how much should the ring save you" curve.
+			double reduction = EndRingEvents.dynamicResistanceReducedBonus(endring$totemFraction(player));
+			if (reduction < 0.0) {
+				return damage;
+			}
+			return damage * (float) (1.0 - reduction);
 		}
 		return damage;
+	}
+
+	private static float endring$totemFraction(Player player) {
+		net.minecraft.world.item.ItemStack ring = EndRingItem.getWorn(player);
+		int max = EndRingItem.maxTotems(ring);
+		return max <= 0 ? 0.0F : (float) EndRingItem.getTotems(ring) / max;
 	}
 
 	private static boolean endring$isImmune(DamageSource source) {

@@ -340,7 +340,7 @@ public final class EndRingEvents {
 		}
 		return -1;
 	}
-	private static double dynamicResistanceReducedBonus(float frac) {
+	public static double dynamicResistanceReducedBonus(float frac) {
 		if (frac < 0.10F) {
 			return 0.9;
 		}
