@@ -5,24 +5,29 @@ import com.hongshaoluobotou.EndRingSummons;
 import net.minecraft.world.entity.ConversionParams;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+/**
+ * When vanilla converts a mob (zombie → drowned, villager → zombie villager, skeleton → stray,
+ * etc.) it allocates a brand-new entity and discards the old one. The old entity's
+ * {@code CUSTOM_DATA} is not automatically carried over in 26.2, so the End Ring owner marker
+ * (and therefore the AI mixin's "follow / target" behaviour) would be lost on conversion.
+ *
+ * <p>We re-tag the fresh entity with the old entity's owner so the targeting and follow mixins
+ * pick it up on the next tick. The SUMMONED bookkeeping list is also updated so the cap count
+ * stays correct.
+ *
+ * <p>26.2 has two {@code Mob.convertTo} overloads: a 4-arg one (canonical, with
+ * {@code AfterConversion}) and a 3-arg one that delegates to it. The 3-arg overload runs first in
+ * the call chain, so targeting the 4-arg method catches every conversion.
+ */
 @Mixin(Mob.class)
 public abstract class MobConvertMixin {
-	// When vanilla converts a mob (zombie -> drowned, villager -> zombie villager, skeleton ->
-	// stray, etc.) it allocates a brand-new entity and discards the old one. Any state we attached
-	// to the old mob - including the EndRingOwner NBT marker and the priority-ladder goal - is
-	// lost. The new mob, having no owner marker, would not trail the player anymore. We re-attach
-	// ownership here so the converted mob still serves the ring wearer.
-	//
-	// 26.2 has two overloads: a 4-arg one (the canonical one with the AfterConversion callback) and
-	// a 3-arg one that delegates to the 4-arg one. The 3-arg overload runs first in the call chain,
-	// so we only need to target the 4-arg method to catch every conversion.
-
 	@Inject(method = "convertTo(Lnet/minecraft/world/entity/EntityType;Lnet/minecraft/world/entity/ConversionParams;Lnet/minecraft/world/entity/EntitySpawnReason;Lnet/minecraft/world/entity/ConversionParams$AfterConversion;)Lnet/minecraft/world/entity/Mob;", at = @At("RETURN"))
 	private <T extends Mob> void endring$onConverted(
 		EntityType<T> entityType,
@@ -36,10 +41,14 @@ public abstract class MobConvertMixin {
 		if (fresh == null) {
 			return;
 		}
-		// Only intervene for End Ring summons. Non-owned conversions (vanilla zombie -> drowned
-		// by a vanilla event, etc.) are left untouched.
+		// Only intervene for End Ring summons. Non-owned conversions (e.g. a vanilla villager
+		// hit by a zombie) are left untouched.
 		if (!EndRingOwnedComponent.hasOwner(self)) {
 			return;
+		}
+		LivingEntity owner = EndRingOwnedComponent.getOwner(self);
+		if (owner != null) {
+			EndRingOwnedComponent.setOwner(fresh, owner);
 		}
 		EndRingSummons.onConverted(self, fresh);
 	}

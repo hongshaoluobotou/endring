@@ -14,8 +14,6 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.ai.goal.Goal;
-import net.minecraft.world.entity.ai.goal.MeleeAttackGoal;
 import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.monster.Vex;
@@ -28,26 +26,27 @@ import net.minecraft.world.phys.AABB;
  * spawn vexes (frac &lt; 0.1 / 0.2), killer bunnies (frac &lt; 0.3 / 0.4) and zombies (frac &lt; 0.5 /
  * 0.6 / 0.7 / 0.8 / 0.9).
  *
- * <p>Each summoned mob is tagged with an owner UUID via {@link EndRingOwnedComponent} (stored in
- * the entity's per-instance CUSTOM_DATA NBT, so the marker survives chunk reloads and
- * {@code Mob.convertTo} conversions). Goals read the owner from NBT on every tick, so a
- * respawned player is still found.
- *
- * <p>Each summoned mob also gets:
+ * <p>Each spawned mob is tagged with the owner's UUID via {@link EndRingOwnedComponent}. The
+ * marker is written in {@link #spawn} after the entity is constructed; from that point on the
+ * mixins in {@code mixin/} take over:
  *
  * <ul>
- *   <li>{@link EndRingFollowOwnerGoal} at goal-priority 1 (trail the owner between fights; teleports
- *       when more than 12 blocks away, matching vanilla {@code TamableAnimal}).</li>
- *   <li>{@link MeleeAttackGoal} at goal-priority 4 (only the EVIL rabbit and the zombie need this;
- *       vexes already have a charge-attack goal).</li>
- *   <li>{@link EndRingAttackOwnerTargetGoal} at target-priority 0 (highest). Forces the mob's
- *       {@code target} to the priority-1-4 entity each tick, overriding any vanilla
- *       {@code NearestAttackableTargetGoal} the mob type may register.</li>
+ *   <li>{@code MobTargetingMixin} blocks the mob from targeting the ring wearer or another owned
+ *       summon, both via {@code canAttack} (used by {@code TargetingConditions}) and via
+ *       {@code setTarget} (the backstop that catches any code path that bypasses
+ *       {@code canAttack}).</li>
+ *   <li>{@code MobAiStepMixin} runs every five ticks and (re)asserts the priority target the mob
+ *       should chase, and walks the mob back toward the owner if it has strayed more than 12
+ *       blocks.</li>
+ *   <li>{@code MobConvertMixin} carries the owner marker across {@code Mob.convertTo} so a zombie
+ *       that becomes a drowned (or any other conversion) keeps serving the ring wearer.</li>
  * </ul>
+ *
+ * <p>This class no longer manipulates goal selectors - all AI injection is via mixins.
  */
 public final class EndRingSummons {
-	// Per-tier damage accumulator. The ring "spends" hp at these rates; residue carries into the next
-	// tick so a single big hit can trigger multiple tiers in one go.
+	// Per-tier damage accumulator. The ring "spends" hp at these rates; residue carries into the
+	// next tick so a single big hit can trigger multiple tiers in one go.
 	private static final Map<UUID, Float> PENDING_VEX_DAMAGE_LIGHT = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_VEX_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_BUNNY_DAMAGE_LIGHT = new HashMap<>();
@@ -59,13 +58,33 @@ public final class EndRingSummons {
 	private static final Map<UUID, Integer> VEX_AUTO_TIMER = new HashMap<>();
 	private static final int VEX_AUTO_INTERVAL_TICKS = 200;
 
-	// Per-player summon list. Used to count living summons, cap spawns, and clean up on ring
-	// removal. Ownership is also tracked per-mob in NBT (EndRingOwnedComponent) so this list
-	// only needs to handle live-runtime counting; persistence is automatic.
+	// Per-player summon list. Used only for cap counting and cleanup on ring removal. The owner
+	// marker is stored per-mob in NBT (EndRingOwnedComponent) so this list is not the source of
+	// truth for "who owns what" - the mixins read NBT directly. The list is kept so we can
+	// cheaply check "is this mob in the swarm for player X" and so we can despawn the swarm
+	// when the player takes the ring off without a global scan.
 	private static final Map<UUID, List<LivingEntity>> SUMMONED = new HashMap<>();
-	private static final java.util.function.Predicate<LivingEntity> ALIVE = e -> e != null && e.isAlive() && !e.isRemoved();
 
-	// Priority 1 (most-recent damage source entity) and priority 2 (entity the player just attacked).
+	/**
+	 * A mob is "counted" (i.e. held against the cap and eligible for cleanup) only when it is in
+	 * a currently-loaded chunk of any server level. The entity is otherwise alive - it has just
+	 * been deserialized out of memory when its chunk unloaded - but our SUMMONED list still holds
+	 * the reference and the NBT marker is preserved. We use {@code level.getEntity(id)} to test
+	 * membership in the live entity set: chunk-unloaded entities return null.
+	 */
+	private static final java.util.function.Predicate<LivingEntity> LOADED = e -> {
+		if (e == null || e.isRemoved() || !e.isAlive()) {
+			return false;
+		}
+		net.minecraft.world.level.Level level = e.level();
+		if (level == null) {
+			return false;
+		}
+		return level.getEntity(e.getId()) == e;
+	};
+
+	// Priority 1 (most-recent damage source entity) and priority 2 (entity the player just
+	// attacked). Read by resolveTargetFor.
 	private static final Map<UUID, LivingEntity> LAST_HURT_ENTITY = new HashMap<>();
 	private static final Map<UUID, LivingEntity> PLAYER_ATTACK_TARGET = new HashMap<>();
 
@@ -74,9 +93,9 @@ public final class EndRingSummons {
 
 	/**
 	 * Server-tick entry point. Drains damage accumulators, runs the 200-tick auto-spawn for
-	 * {@code frac < 0.1} vexes, then runs the summon-list reaper so dead/converted entries are
-	 * pruned. Target re-selection is handled by {@link EndRingAttackOwnerTargetGoal} in each mob's
-	 * own AI tick.
+	 * {@code frac < 0.1} vexes, and prunes the SUMMONED list of dead / chunk-unloaded entries.
+	 * Targeting and follow behaviour is driven by the mixins in {@code mixin/} - we don't touch
+	 * goal selectors here.
 	 */
 	public static void onPlayerTick(ServerPlayer player) {
 		ItemStack ring = EndRingItem.getWorn(player);
@@ -104,8 +123,8 @@ public final class EndRingSummons {
 	}
 
 	/**
-	 * Records that the player just took damage. {@code damageTaken} is the post-mitigation value the
-	 * Fabric {@code AFTER_DAMAGE} event reports; this is the hp the player actually felt.
+	 * Records that the player just took damage. {@code damageTaken} is the post-mitigation value
+	 * the Fabric {@code AFTER_DAMAGE} event reports; this is the hp the player actually felt.
 	 */
 	public static void onDamaged(ServerPlayer player, float damageTaken) {
 		if (damageTaken <= 0.0F) {
@@ -142,8 +161,19 @@ public final class EndRingSummons {
 	}
 
 	/**
-	 * Called by {@link EndRingAttackOwnerTargetGoal} from each summoned mob's own AI tick. Resolves
-	 * the four-step priority ladder for the given mob's owner.
+	 * Called by the {@code MobAiStepMixin} from each owned mob's AI tick. Resolves the four-step
+	 * priority ladder for the given mob's owner:
+	 *
+	 * <ol>
+	 *   <li>The entity that most recently hurt the player ({@code LAST_HURT_ENTITY}).</li>
+	 *   <li>The entity the player last attacked ({@code PLAYER_ATTACK_TARGET}).</li>
+	 *   <li>The entity the player was last hurt by (vanilla {@code getLastHurtByMob}).</li>
+	 *   <li>The nearest entity of the same type as any of 1/2/3 within 64 blocks of the owner
+	 *       (skips the original 1/2/3 entity itself and any End Ring summon).</li>
+	 * </ol>
+	 *
+	 * <p>Returns {@code null} if no valid target exists - the calling mixin writes that as
+	 * {@code setTarget(null)} which clears the existing target.
 	 */
 	public static LivingEntity resolveTargetFor(Mob summoned, LivingEntity owner) {
 		UUID id = owner.getUUID();
@@ -229,25 +259,25 @@ public final class EndRingSummons {
 		UUID id = player.getUUID();
 
 		if (frac < 0.1F) {
-			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 1.0F, EndRingSummons::spawnVexes, 20);
+			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 1.0F, EndRingSummons::spawnVexes, 24);
 		} else {
 			PENDING_VEX_DAMAGE_LIGHT.remove(id);
 		}
 
 		if (frac < 0.2F) {
-			spendPool(player, PENDING_VEX_DAMAGE, id, 1.5F, EndRingSummons::spawnVexes, 10);
+			spendPool(player, PENDING_VEX_DAMAGE, id, 1.5F, EndRingSummons::spawnVexes, 12);
 		} else {
 			PENDING_VEX_DAMAGE.remove(id);
 		}
 
 		if (frac < 0.3F) {
-			spendPool(player, PENDING_BUNNY_DAMAGE_LIGHT, id, 1.5F, EndRingSummons::spawnKillerBunnies, 9);
+			spendPool(player, PENDING_BUNNY_DAMAGE_LIGHT, id, 1.5F, EndRingSummons::spawnKillerBunnies, 18);
 		} else {
 			PENDING_BUNNY_DAMAGE_LIGHT.remove(id);
 		}
 
 		if (frac < 0.4F) {
-			spendPool(player, PENDING_BUNNY_DAMAGE, id, 2.0F, EndRingSummons::spawnKillerBunnies, 5);
+			spendPool(player, PENDING_BUNNY_DAMAGE, id, 2.0F, EndRingSummons::spawnKillerBunnies, 9);
 		} else {
 			PENDING_BUNNY_DAMAGE.remove(id);
 		}
@@ -256,7 +286,7 @@ public final class EndRingSummons {
 			float pool = PENDING_ZOMBIE_DAMAGE_FOUR.getOrDefault(id, 0.0F);
 			if (pool >= 4.0F) {
 				int spawns = (int) (pool / 4.0F);
-				if (spawnZombies(player, spawns * 2, 5)) {
+				if (spawnZombies(player, spawns * 2, 12)) {
 					pool -= spawns * 4.0F;
 					PENDING_ZOMBIE_DAMAGE_FOUR.put(id, pool);
 				}
@@ -271,13 +301,13 @@ public final class EndRingSummons {
 		// (0.9) - otherwise the frac < 0.6 else-branch would wipe the pool the moment the
 		// player crossed 0.6 and the higher tiers would never fire.
 		if (frac < 0.6F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 4.0F, EndRingSummons::spawnZombies, 3);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 4.0F, EndRingSummons::spawnZombies, 9);
 		}
 		if (frac < 0.7F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 8.0F, EndRingSummons::spawnZombies, 3);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 8.0F, EndRingSummons::spawnZombies, 6);
 		}
 		if (frac < 0.8F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 12.0F, EndRingSummons::spawnZombies, 3);
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 12.0F, EndRingSummons::spawnZombies, 4);
 		}
 		if (frac < 0.9F) {
 			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 16.0F, EndRingSummons::spawnZombies, 3);
@@ -308,7 +338,13 @@ public final class EndRingSummons {
 		List<LivingEntity> list = SUMMONED.remove(id);
 		if (list != null) {
 			for (LivingEntity e : list) {
-				if (e != null && e.isAlive() && !e.isRemoved()) {
+				// Only call discard() on entities that are still loaded in some level - chunk
+				// unload has already detached them and the entity object is no longer
+				// attached to any world.
+				if (LOADED.test(e)) {
+					if (e instanceof Mob m) {
+						EndRingOwnedComponent.clearOwner(m);
+					}
 					e.discard();
 				}
 			}
@@ -329,7 +365,25 @@ public final class EndRingSummons {
 		if (list == null) {
 			return;
 		}
-		list.removeIf(e -> !ALIVE.test(e) || !EndRingOwnedComponent.hasOwner((Mob) e) || EndRingOwnedComponent.getOwner((Mob) e) != player);
+		list.removeIf(e -> !LOADED.test(e));
+	}
+
+	/**
+	 * Called by {@code MobConvertMixin} after {@code Mob.convertTo} swaps the entity. Swaps the
+	 * SUMMONED list entry from old to fresh and clears the owner marker on the old (now detached)
+	 * instance so a stale reference can't keep ticking AI for a mob that's been replaced.
+	 */
+	public static void onConverted(Mob old, Mob fresh) {
+		if (old == null || fresh == null || old == fresh) {
+			return;
+		}
+		for (List<LivingEntity> entry : SUMMONED.values()) {
+			if (entry.remove(old)) {
+				entry.add(fresh);
+				break;
+			}
+		}
+		EndRingOwnedComponent.clearOwner(old);
 	}
 
 	private static float totemFraction(ItemStack ring) {
@@ -348,8 +402,9 @@ public final class EndRingSummons {
 	private static boolean spawnKillerBunnies(ServerPlayer player, int count, int cap) {
 		return spawn(player, EntityTypes.RABBIT, count, cap, (level, mob) -> {
 			// setVariant is private in vanilla; the accessor mixin exposes it. The EVIL variant
-			// installs the MeleeAttackGoal, HurtByTargetGoal and Player/Wolf targeting in its
-			// setVariant method, so the rabbit actually fights back.
+			// installs MeleeAttackGoal + HurtByTargetGoal + NearestAttackableTargetGoal<Player/Wolf>
+			// in its setVariant method, so the rabbit actually fights back. The targeting mixin
+			// then blocks the auto-acquired Player target.
 			((RabbitVariantAccessor) mob).endring$setVariant(Rabbit.Variant.EVIL);
 		});
 	}
@@ -370,7 +425,7 @@ public final class EndRingSummons {
 		}
 		ServerLevel level = player.level();
 		List<LivingEntity> list = SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>());
-		list.removeIf(e -> !ALIVE.test(e));
+		list.removeIf(e -> !LOADED.test(e));
 		int free = cap - list.size();
 		if (free <= 0) {
 			return false;
@@ -385,7 +440,9 @@ public final class EndRingSummons {
 				continue;
 			}
 			config.configure(level, mob);
-			installOwnedAi(mob, player);
+			// Tag the mob with the owner UUID. From the next aiStep onwards the targeting and
+			// follow mixins in mixin/ take over - no goal selector rewriting is done.
+			EndRingOwnedComponent.setOwner(mob, player);
 			list.add(mob);
 		}
 		return true;
@@ -393,94 +450,26 @@ public final class EndRingSummons {
 
 	private static void configureVex(ServerLevel level, Mob mob) {
 		if (mob instanceof Vex vex) {
-			// setLimitedLife matches vanilla spell-summoned vexes: ~30s before the vex starves itself.
+			// setLimitedLife matches vanilla spell-summoned vexes: ~30s before the vex starves
+			// itself.
 			vex.setLimitedLife(20 * 30);
 		}
 	}
 
-	/**
-	 * Replaces the mob's hostile-with-owner-player behaviour with End Ring AI:
-	 *
-	 * <ol>
-	 *   <li>Tag the mob with the player as owner (NBT-backed).</li>
-	 *   <li>Strip the vanilla target-selector entries that would acquire the owner (NearestAttackableTargetGoal on Player/Wolf for killer bunnies, target-on-angry for zombies, etc.) and HurtByTargetGoal so the mob doesn't auto-retaliate against the player.</li>
-	 *   <li>Add the wolf-style follow goal at goal-priority 1.</li>
-	 *   <li>Add a melee attack goal at priority 4 (zombie / killer bunny; vex already has its own).</li>
-	 *   <li>Install our target-priority goal at target-priority 0 (highest).</li>
-	 * </ol>
-	 */
-	public static void installOwnedAi(Mob mob, ServerPlayer owner) {
-		EndRingOwnedComponent.setOwner(mob, owner);
-
-		// Strip vanilla target-selector entries. The mob type's targeting was designed for the
-		// hostile case and would otherwise acquire the owner as a target.
-		// removeAllGoals(true) on a Predicate<Goal> is exposed publicly by GoalSelector.
-		((com.hongshaoluobotou.mixin.MobTargetSelectorAccessor) mob).endring$targetSelector().removeAllGoals(g -> true);
-
-		mob.getGoalSelector().addGoal(1, new EndRingFollowOwnerGoal(mob, 1.0, 10.0F, 2.0F));
-		if (mob instanceof PathfinderMob pm && !(mob instanceof Vex)) {
-			mob.getGoalSelector().addGoal(4, new MeleeAttackGoal(pm, 1.0, true));
-		}
-
-		// Target selector: our priority-ladder goal at the highest priority.
-		((com.hongshaoluobotou.mixin.MobTargetSelectorAccessor) mob).endring$targetSelector().addGoal(0, new EndRingAttackOwnerTargetGoal(mob));
-	}
-
 	// -----------------------------------------------------------------------
-	// Conversion (zombie -> drowned, villager -> zombie villager, etc.)
+	// Internal-only constants exposed for testing
 	// -----------------------------------------------------------------------
 
-	/**
-	 * Called by the {@code MobConvertMixin} after {@code Mob.convertTo} swaps the entity. The
-	 * CUSTOM_DATA NBT (which carries the owner marker) is automatically copied by the entity's own
-	 * save/load cycle, but in 26.2 {@code convertTo} does not copy entity data. We re-tag the fresh
-	 * entity with the old entity's owner and re-install the AI goals.
-	 */
-	public static void onConverted(Mob old, Mob fresh) {
-		if (old == null || fresh == null || old == fresh) {
-			return;
-		}
-		UUID ownerId = null;
-		for (Map.Entry<UUID, List<LivingEntity>> entry : SUMMONED.entrySet()) {
-			if (entry.getValue().remove(old)) {
-				entry.getValue().add(fresh);
-				ownerId = entry.getKey();
-				break;
-			}
-		}
-		if (ownerId == null) {
-			return;
-		}
-		if (!(fresh.level() instanceof ServerLevel level)) {
-			return;
-		}
-		ServerPlayer owner = level.getServer().getPlayerList().getPlayer(ownerId);
-		if (owner == null) {
-			return;
-		}
-		// NBT persistence: write the owner UUID directly into the new entity's CUSTOM_DATA so
-		// the goal's getOwner() lookup succeeds even if EndRingOwnedComponent.setOwner's
-		// entity-data path is interrupted by the conversion. We re-use the same key shape.
-		copyOwnerNbt(old, fresh);
-		installOwnedAi(fresh, owner);
+	static int summonCount(ServerPlayer player) {
+		List<LivingEntity> list = SUMMONED.get(player.getUUID());
+		return list == null ? 0 : (int) list.stream().filter(LOADED).count();
 	}
 
-	private static void copyOwnerNbt(Mob old, Mob fresh) {
-		net.minecraft.world.item.component.CustomData oldData = old.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA);
-		if (oldData == null || oldData.isEmpty()) {
-			return;
+	static boolean hasLiveSummonOf(ServerPlayer player, Class<? extends Mob> type) {
+		List<LivingEntity> list = SUMMONED.get(player.getUUID());
+		if (list == null) {
+			return false;
 		}
-		net.minecraft.nbt.CompoundTag freshTag = fresh.get(net.minecraft.core.component.DataComponents.CUSTOM_DATA).copyTag();
-		net.minecraft.nbt.CompoundTag oldTag = oldData.copyTag();
-		for (String key : new String[]{"EndRingOwner", "EndRingOwnerMost", "EndRingOwnerLeast"}) {
-			if (oldTag.contains(key)) {
-				if (oldTag.get(key) instanceof net.minecraft.nbt.LongTag lt) {
-					freshTag.putLong(key, lt.longValue());
-				} else if (oldTag.get(key) instanceof net.minecraft.nbt.StringTag st) {
-					freshTag.putString(key, st.value());
-				}
-			}
-		}
-		fresh.setComponent(net.minecraft.core.component.DataComponents.CUSTOM_DATA, net.minecraft.world.item.component.CustomData.of(freshTag));
+		return list.stream().anyMatch(e -> LOADED.test(e) && type.isInstance(e));
 	}
 }
