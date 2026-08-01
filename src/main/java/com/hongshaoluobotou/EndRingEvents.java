@@ -92,6 +92,11 @@ public final class EndRingEvents {
 			}
 			return true;
 		});
+		ServerLivingEntityEvents.AFTER_DEATH.register((entity, source) -> {
+			if (entity instanceof ServerPlayer player) {
+				EndRingSummons.clearAll(player);
+			}
+		});
 	}
 
 	private static void tickPlayer(ServerPlayer player) {

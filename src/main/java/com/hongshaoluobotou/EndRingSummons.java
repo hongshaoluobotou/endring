@@ -400,7 +400,7 @@ public final class EndRingSummons {
 		pool.put(id, current - spawns * costPerSpawn);
 	}
 
-	private static void clearAll(ServerPlayer player) {
+	public static void clearAll(ServerPlayer player) {
 		UUID id = player.getUUID();
 		List<LivingEntity> list = SUMMONED.remove(id);
 		if (list != null) {
