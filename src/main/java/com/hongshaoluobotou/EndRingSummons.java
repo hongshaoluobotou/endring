@@ -11,6 +11,7 @@ import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
@@ -20,7 +21,6 @@ import net.minecraft.world.entity.animal.rabbit.Rabbit;
 import net.minecraft.world.entity.monster.Vex;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * End Ring summon manager. As the ring's stored totems run low the ring bleeds the wearer's hp to
@@ -107,18 +107,16 @@ public final class EndRingSummons {
 	private static final int PER_TICK_BUDGET = 3;
 
 	private enum SpawnType {
-		VEX(EntityTypes.VEX, Vex.class, VEX_POLICY),
-		BUNNY(EntityTypes.RABBIT, Rabbit.class, RABBIT_POLICY),
-		ZOMBIE(EntityTypes.ZOMBIE, Zombie.class, ZOMBIE_POLICY);
+		VEX(EntityTypes.VEX, Vex.class),
+		BUNNY(EntityTypes.RABBIT, Rabbit.class),
+		ZOMBIE(EntityTypes.ZOMBIE, Zombie.class);
 
 		final EntityType<? extends Mob> entityType;
 		final Class<? extends Mob> typeClass;
-		final SpawnPolicy policy;
 
-		SpawnType(EntityType<? extends Mob> entityType, Class<? extends Mob> typeClass, SpawnPolicy policy) {
+		SpawnType(EntityType<? extends Mob> entityType, Class<? extends Mob> typeClass) {
 			this.entityType = entityType;
 			this.typeClass = typeClass;
-			this.policy = policy;
 		}
 	}
 
@@ -466,16 +464,6 @@ public final class EndRingSummons {
 	// Spawn helpers
 	// -----------------------------------------------------------------------
 
-	// Per-mob-type spawn policy. Vexes fly (no solid floor needed, no head check); rabbits are
-	// 0.5 blocks tall (one-block clearance is enough); zombies need a solid floor and 2-block
-	// clearance.
-	private static final SpawnPolicy VEX_POLICY = new SpawnPolicy(false, false);
-	private static final SpawnPolicy RABBIT_POLICY = new SpawnPolicy(true, true);
-	private static final SpawnPolicy ZOMBIE_POLICY = new SpawnPolicy(true, false);
-
-	private record SpawnPolicy(boolean needsSolidFloor, boolean oneBlockTall) {
-	}
-
 	/**
 	 * Push a spawn request onto the player's queue instead of generating the entity right away.
 	 * Multiple jobs for the same type are coalesced so a hit that triggers several pools at once
@@ -500,13 +488,17 @@ public final class EndRingSummons {
 	/**
 	 * Flush up to {@link #PER_TICK_BUDGET} entities from the player's queue. Each pop decrements
 	 * the job by 1; the job is removed when it hits 0. The cap check uses the player's current
-	 * frac, so a cap-shrink while jobs are queued silently trims the overflow.
+	 * frac, so a cap-shrink while jobs are queued silently trims the overflow. Spawning itself
+	 * is delegated to {@link #summonAround}, which samples up to {@code MAX_ATTEMPTS} positions
+	 * and falls back to a forced spawn at the player's head on a total miss.
 	 */
 	private static void drainPendingSpawns(ServerPlayer player, float frac) {
 		Deque<SpawnJob> queue = PENDING_SPAWNS.get(player.getUUID());
 		if (queue == null || queue.isEmpty()) {
 			return;
 		}
+		ServerLevel level = player.level();
+		BlockPos center = player.blockPosition();
 		int budget = PER_TICK_BUDGET;
 		while (budget > 0 && !queue.isEmpty()) {
 			SpawnJob job = queue.peekFirst();
@@ -533,15 +525,17 @@ public final class EndRingSummons {
 				queue.removeFirst();
 				continue;
 			}
-			if (spawnOne(player, job.type)) {
-				job.remaining--;
+			int spawned = summonAround(level, center, job.type, 1, player, 5, 3, 5);
+			if (spawned > 0) {
+				job.remaining -= spawned;
 				if (job.remaining <= 0) {
 					queue.removeFirst();
 				}
-				budget--;
+				budget -= spawned;
 			} else {
-				// Spawn failed (no safe pocket AND the player-position fallback collided).
-				// Drop the job so we don't spin on it forever; pool residue stays spent.
+				// spawned == 0: even the forced fallback at center.above() failed (player inside
+				// a 1x1 box, or world fully blocked). Drop the job - it cannot succeed next tick
+				// without the player moving.
 				queue.removeFirst();
 			}
 		}
@@ -556,26 +550,12 @@ public final class EndRingSummons {
 	}
 
 	/**
-	 * Generate exactly one entity of the given type, attaching the owner marker. Returns
-	 * {@code false} if the entity factory or the type-specific configurator rejects the call
-	 * (extremely rare - configurators are inlined here for the three summonable types).
+	 * Per-type overrides applied AFTER vanilla finalizeSpawn so we don't have to reimplement
+	 * the equipment / variant / attribute randomisation paths ourselves. Vex lifetime still has
+	 * to be set manually because vanilla Vex.finalizeSpawn doesn't install it; the killer-bunny
+	 * variant has to override the biome-aware one that Rabbit.finalizeSpawn just picked.
 	 */
-	private static boolean spawnOne(ServerPlayer player, SpawnType type) {
-		ServerLevel level = player.level();
-		BlockPos at = findSafeSpawn(level, player.blockPosition(), type.policy);
-		Mob mob = type.entityType.spawn(level, at.immutable(), EntitySpawnReason.MOB_SUMMONED);
-		if (mob == null) {
-			return false;
-		}
-		configureByType(mob, type);
-		// Tag the mob with the owner UUID. From the next aiStep onwards the targeting and
-		// follow mixins in mixin/ take over - no goal selector rewriting is done.
-		EndRingOwnedComponent.setOwner(mob, player);
-		SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>()).add(mob);
-		return true;
-	}
-
-	private static void configureByType(Mob mob, SpawnType type) {
+	private static void postSpawnConfigure(Mob mob, SpawnType type) {
 		switch (type) {
 			case VEX -> {
 				if (mob instanceof Vex vex) {
@@ -589,134 +569,149 @@ public final class EndRingSummons {
 				// variant installs MeleeAttackGoal + HurtByTargetGoal +
 				// NearestAttackableTargetGoal<Player/Wolf> in its setVariant method, so the
 				// rabbit actually fights back. The targeting mixin then blocks the auto-acquired
-				// Player target.
+				// Player target. We override here because Rabbit.finalizeSpawn just picked a
+				// biome-aware variant.
 				((RabbitVariantAccessor) mob).endring$setVariant(Rabbit.Variant.EVIL);
 			}
 			case ZOMBIE -> {
-				// no extra config: vanilla zombie is fine.
+				// no extra config: vanilla Zombie.finalizeSpawn already randomised occupation,
+				// equipment, enchantments, knockback resistance, follow range, and reinforcement
+				// chance based on the local difficulty. We get all of that for free.
 			}
 		}
 	}
 
 	/**
-	 * Try to place the mob in a sane pocket of space.
-	 * <ul>
-	 *   <li>Vex (no safety): just drop it one block above the player; flying mobs can sort
-	 *       themselves out of walls on their own.</li>
-	 *   <li>Otherwise scan the 3x3 around the player (player cell first) for a spot whose
-	 *       feet block is air or a source fluid, whose head block is air or a source fluid
-	 *       (or skip the head check for one-block-tall mobs like rabbits), and which has a
-	 *       solid floor underneath (when the policy requires a solid floor).</li>
-	 *   <li>Two distinct degenerate cases get dedicated fallbacks rather than the
-	 *       "spawn at player pos" crutch:
-	 *     <ul>
-	 *       <li>If every scanned cell fails because the <em>floor is air/water</em>
-	 *           (i.e. the player is standing over open air / water with nothing to
-	 *           stand on nearby) the caller is floating in featureless space; pick a
-	 *           random cell in the 3x3 and place the mob there regardless of floor.</li>
-	 *       <li>If every scanned cell fails because the <em>feet cell is already
-	 *           occupied</em> by a solid block, the player is boxed in; fall back to
-	 *           the player's own position (feet+1) so the summon still appears on
-	 *           the player rather than vanishing.</li>
-	 *     </ul>
-	 *   </li>
-	 * </ul>
+	 * Per-entity position-sampling budget used by {@link #summonAround}. Matches the 12 attempts
+	 * vanilla's BaseSpawner / NaturalSpawner run before giving up on a single mob.
 	 */
-	private static BlockPos findSafeSpawn(ServerLevel level, BlockPos playerPos, SpawnPolicy policy) {
-		BlockPos headHeight = new BlockPos(playerPos.getX(), playerPos.getY(), playerPos.getZ());
-		if (!policy.needsSolidFloor()) {
-			// Vex - no safety check whatsoever; park it one block above the player.
-			return headHeight;
+	private static final int MAX_ATTEMPTS = 12;
+
+	/**
+	 * 在指定坐标固定刷出 1 只怪物。无采样, 无重试: 给定坐标不合法就返回 false。
+	 * <p>
+	 * 碰撞检查按怪物类型分:
+	 * <ul>
+	 *   <li>vex: 不做碰撞箱检查, 直接尝试刷出 (vex 体积小, 偶发卡方块边缘可接受)。</li>
+	 *   <li>zombie / rabbit: 检查 per-entity AABB, 避免出生在实心方块内部。</li>
+	 * </ul>
+	 * 成功刷出后写入 owner 标记 + 追加到 {@link #SUMMONED}。
+	 *
+	 * @param level  服务端世界
+	 * @param pos    怪物 {@link EntityType#spawn} 接收的坐标 (vanilla 会用 getYOffset 找脚下)
+	 * @param type   怪物类型
+	 * @param owner  拥有者 (写入 EndRingOwnedComponent + SUMMONED)
+	 * @return 成功刷出 true; 给定坐标被判定为不合法时 false
+	 */
+	private static boolean summonAt(
+		ServerLevel level,
+		BlockPos pos,
+		SpawnType type,
+		LivingEntity owner
+	) {
+		EntityType<? extends Mob> entityType = type.entityType;
+		double x = pos.getX() + 0.5;
+		double y = pos.getY();
+		double z = pos.getZ() + 0.5;
+		if (type != SpawnType.VEX && !level.noCollision(entityType.getSpawnAABB(x, y, z))) {
+			return false;
 		}
-		int[][] deltas = new int[25][];
-		int idx = 0;
-		for (int dx = -2; dx <= 2; dx++) {
-			for (int dz = -2; dz <= 2; dz++) {
-				deltas[idx++] = new int[]{dx, dz};
-			}
+		Mob mob = entityType.spawn(
+			level,
+			null,
+			null,
+			pos.immutable(),
+			EntitySpawnReason.MOB_SUMMONED,
+			true,
+			false
+		);
+		if (mob == null) {
+			return false;
 		}
-		boolean anyFeetBlocked = false;
-		boolean anyFloorOpen = false;
-		for (int[] d : deltas) {
-			int x = playerPos.getX() + d[0];
-			int z = playerPos.getZ() + d[1];
-			int y = playerPos.getY() + 1;
-			SpotResult r = classifySpot(level, x, y, z, policy);
-			if (r == SpotResult.OK) {
-				return new BlockPos(x, y, z);
-			}
-			if (r == SpotResult.FEET_BLOCKED) {
-				anyFeetBlocked = true;
-			} else if (r == SpotResult.FLOOR_OPEN) {
-				anyFloorOpen = true;
-			}
+		postSpawnConfigure(mob, type);
+		EndRingOwnedComponent.setOwner(mob, owner);
+		SUMMONED.computeIfAbsent(owner.getUUID(), k -> new ArrayList<>()).add(mob);
+		return true;
+	}
+
+	/**
+	 * 在中心坐标周围批量生成怪物。每只怪独立最多 12 次坐标采样, 全失败本轮就放弃。
+	 * 抽样范围: X / Z 浮点 ±size/2, Y 整数 [center.y+1-size/2, center.y+1+size/2] (整数除以 2,
+	 * 自动向下取整, 即 size=5 时 Y 档为 -2, -1, 0, +1, +2)。
+	 * <p>
+	 * 地面规则: vex 一直浮空, 不做脚下校验; zombie / rabbit 前 11 次采样要求脚下方块通过
+	 * {@code isValidSpawn} (即标准可站立方块), 最后一次放宽允许浮空 —— 玩家卡墙角时仍能出怪。
+	 * <p>
+	 * 全失败兜底: 整批 {@code max} 只都没找到合法位置时, 在 {@code center.above()}
+	 * 强制刷 1 只 (交给 vanilla {@code getYOffset} 找脚下)。这样玩家卡墙角等极端场景下
+	 * 仍能保证这一 tick 至少出 1 只, 不用把 job 留到下 tick 重试。
+	 *
+	 * @param level  服务端世界
+	 * @param center 中心坐标 (玩家脚部 BlockPos)
+	 * @param type   怪物类型
+	 * @param max    本次最多生成数量
+	 * @param owner  拥有者 (写入 EndRingOwnedComponent + SUMMONED)
+	 * @param xSize  X 轴盒子边长 (5 → 5 格宽, 抽样 ±2)
+	 * @param ySize  Y 轴盒子边长 (3 → 3 个 Y 档, 抽样 -1, 0, +1)
+	 * @param zSize  Z 轴盒子边长 (5 → 5 格深, 抽样 ±2)
+	 * @return 实际生成数量
+	 */
+	private static int summonAround(
+		ServerLevel level,
+		BlockPos center,
+		SpawnType type,
+		int max,
+		LivingEntity owner,
+		int xSize,
+		int ySize,
+		int zSize
+	) {
+		if (max <= 0 || xSize <= 0 || ySize <= 0 || zSize <= 0) {
+			return 0;
 		}
-		// If every candidate failed because there was nowhere to stand (floor open everywhere),
-		// random-pick a cell in the ring and drop the mob there. The Y is also jittered inside a
-		// small band around the player's head so the swarm spreads out vertically instead of
-		// stacking on the same slab. The cell's feet block must still be passable - otherwise the
-		// mob would be wedged inside a wall - so we re-roll until we find a passable pick. If no
-		// passable random pick can be found, fall back to the player's own coordinates so the
-		// summon still appears on the player rather than vanishing.
-		if (!anyFeetBlocked && anyFloorOpen) {
-			BlockPos fallback = headHeight;
-			for (int attempt = 0; attempt < 8; attempt++) {
-				int[] pick = deltas[level.getRandom().nextInt(deltas.length)];
-				int x = playerPos.getX() + pick[0];
-				int z = playerPos.getZ() + pick[1];
-				int yOffset = level.getRandom().nextInt(3) - 1; // -1, 0, +1
-				int y = playerPos.getY() + 1 + yOffset;
-				if (isPassable(level, new BlockPos(x, y, z))) {
-					return new BlockPos(x, y, z);
+		EntityType<? extends Mob> entityType = type.entityType;
+		boolean skipCollision = (type == SpawnType.VEX);
+		RandomSource random = level.getRandom();
+		double xHalf = xSize / 2.0;
+		double zHalf = zSize / 2.0;
+		int yHalf = ySize / 2;
+		int spawned = 0;
+		for (int i = 0; i < max; i++) {
+			boolean placed = false;
+			for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+				boolean isFinalAttempt = (attempt == MAX_ATTEMPTS - 1);
+				double x = center.getX() + (random.nextDouble() - random.nextDouble()) * xHalf;
+				double y = center.getY() + 1 + random.nextInt(ySize) - yHalf;
+				double z = center.getZ() + (random.nextDouble() - random.nextDouble()) * zHalf;
+				BlockPos pos = BlockPos.containing(x, y, z);
+				if (!skipCollision && !level.noCollision(entityType.getSpawnAABB(x, y, z))) {
+					continue;
+				}
+				// zombie / rabbit: 前 11 次要求站在可站立方块上 (脚下方块通过 isValidSpawn),
+				// 最后一次允许浮空 (玩家卡墙角时仍能出怪)。vex 一直浮空, 不受此约束。
+				if (!skipCollision && !isFinalAttempt) {
+					BlockPos below = pos.below();
+					if (!level.getBlockState(below).isValidSpawn(level, below, entityType)) {
+						continue;
+					}
+				}
+				if (summonAt(level, pos.immutable(), type, owner)) {
+					spawned++;
+					placed = true;
+					break;
 				}
 			}
-			return fallback;
-		}
-		// Otherwise (some feet were blocked, possibly mixed) spawn on the player so the
-		// summon still materialises rather than silently disappearing.
-		return headHeight;
-	}
-
-	private enum SpotResult {
-		OK,
-		FEET_BLOCKED,
-		FLOOR_OPEN
-	}
-
-	private static SpotResult classifySpot(ServerLevel level, int x, int y, int z, SpawnPolicy policy) {
-		BlockPos feet = new BlockPos(x, y, z);
-		if (!isPassable(level, feet)) {
-			return SpotResult.FEET_BLOCKED;
-		}
-		if (!policy.oneBlockTall()) {
-			BlockPos head = new BlockPos(x, y + 1, z);
-			if (!isPassable(level, head)) {
-				return SpotResult.FEET_BLOCKED;
+			if (!placed) {
+				break;
 			}
 		}
-		if (policy.needsSolidFloor()) {
-			BlockPos floor = new BlockPos(x, y - 1, z);
-			BlockState floorState = level.getBlockState(floor);
-			if (floorState.isAir() || !floorState.blocksMotion()) {
-				return SpotResult.FLOOR_OPEN;
+		if (spawned == 0) {
+			// 全失败兜底: 玩家脚部正上方强制刷 1 只, 不再等下 tick。
+			if (summonAt(level, center.above(), type, owner)) {
+				spawned = 1;
 			}
 		}
-		return SpotResult.OK;
-	}
-
-	private static boolean isPassable(ServerLevel level, BlockPos pos) {
-		if (level.getFluidState(pos).isSource()) {
-			return true;
-		}
-		return level.getBlockState(pos).isAir();
-	}
-
-	private static void configureVex(ServerLevel level, Mob mob) {
-		if (mob instanceof Vex vex) {
-			// setLimitedLife matches vanilla spell-summoned vexes: ~30s before the vex starves
-			// itself.
-			vex.setLimitedLife(20 * 30);
-		}
+		return spawned;
 	}
 
 	// -----------------------------------------------------------------------
