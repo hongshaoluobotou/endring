@@ -631,6 +631,13 @@ public final class EndRingSummons {
 		postSpawnConfigure(mob, type);
 		EndRingOwnedComponent.setOwner(mob, owner);
 		SUMMONED.computeIfAbsent(owner.getUUID(), k -> new ArrayList<>()).add(mob);
+		// 生成时给随机方向和速度
+		RandomSource random = level.getRandom();
+		mob.setDeltaMovement(
+			(random.nextFloat() - 0.5f) * 0.6f,
+			(random.nextFloat() - 0.5f) * 0.2f,
+			(random.nextFloat() - 0.5f) * 0.6f
+		);
 		return true;
 	}
 
