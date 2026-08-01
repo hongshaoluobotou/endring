@@ -1,7 +1,9 @@
 package com.hongshaoluobotou;
 
 import com.hongshaoluobotou.mixin.RabbitVariantAccessor;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,6 +97,41 @@ public final class EndRingSummons {
 	private static final Map<UUID, LivingEntity> LAST_HURT_ENTITY = new HashMap<>();
 	private static final Map<UUID, LivingEntity> PLAYER_ATTACK_TARGET = new HashMap<>();
 
+	// Queued spawns: damage pools (and the auto-spawn timer) record spawns here instead of
+	// generating entities directly. drainPendingSpawns() flushes up to PER_TICK_BUDGET jobs per
+	// tick, which keeps a single big-hit frame from cramming a dozen vexes + bunnies + zombies
+	// into the player's pocket and crushing them with cramming damage. The cap check still runs
+	// at drain time using the player's *current* cap, so a cap-shrink that happens while jobs
+	// are queued simply trims the overflow off the tail.
+	private static final Map<UUID, Deque<SpawnJob>> PENDING_SPAWNS = new HashMap<>();
+	private static final int PER_TICK_BUDGET = 3;
+
+	private enum SpawnType {
+		VEX(EntityTypes.VEX, Vex.class, VEX_POLICY),
+		BUNNY(EntityTypes.RABBIT, Rabbit.class, RABBIT_POLICY),
+		ZOMBIE(EntityTypes.ZOMBIE, Zombie.class, ZOMBIE_POLICY);
+
+		final EntityType<? extends Mob> entityType;
+		final Class<? extends Mob> typeClass;
+		final SpawnPolicy policy;
+
+		SpawnType(EntityType<? extends Mob> entityType, Class<? extends Mob> typeClass, SpawnPolicy policy) {
+			this.entityType = entityType;
+			this.typeClass = typeClass;
+			this.policy = policy;
+		}
+	}
+
+	private static final class SpawnJob {
+		final SpawnType type;
+		int remaining;
+
+		SpawnJob(SpawnType type, int count) {
+			this.type = type;
+			this.remaining = count;
+		}
+	}
+
 	private EndRingSummons() {
 	}
 
@@ -116,7 +153,7 @@ public final class EndRingSummons {
 		if (frac < 0.1F) {
 			int timer = VEX_AUTO_TIMER.getOrDefault(id, 0) + 1;
 			if (timer >= VEX_AUTO_INTERVAL_TICKS) {
-				spawnVexes(player, 3, capForFrac(VEX_CAPS, VEX_CAPS_VALUES, frac));
+				enqueueSpawn(player, SpawnType.VEX, 3);
 				VEX_AUTO_TIMER.put(id, 0);
 			} else {
 				VEX_AUTO_TIMER.put(id, timer);
@@ -126,6 +163,7 @@ public final class EndRingSummons {
 		}
 
 		consumePools(player, frac);
+		drainPendingSpawns(player, frac);
 		prune(player);
 	}
 
@@ -266,49 +304,47 @@ public final class EndRingSummons {
 	private static void consumePools(ServerPlayer player, float frac) {
 		UUID id = player.getUUID();
 
-		// Each pool is a separate channel with its own frac gate, cost-per-spawn, and per-mob-type
-		// cap. Multiple pools can fire in the same tick - e.g. at frac=0.25 the light vex, the
-		// heavy vex, and the light bunny pools all drain in parallel, so the player can end up
-		// with vexes and killer bunnies side-by-side. Per-mob-type caps scale with frac: the
-		// lower the ring's totems, the more of each mob type we let pile up, so the swarm
-		// actually gets dense right when the player needs it most.
-
-		int vexCap = capForFrac(VEX_CAPS, VEX_CAPS_VALUES, frac);
-		int bunnyCap = capForFrac(BUNNY_CAPS, BUNNY_CAPS_VALUES, frac);
-		int zombieCap = capForFrac(ZOMBIE_CAPS, ZOMBIE_CAPS_VALUES, frac);
+		// Each pool is a separate channel with its own frac gate and cost-per-spawn. Multiple
+		// pools can fire in the same tick - e.g. at frac=0.25 the light vex, the heavy vex, and
+		// the light bunny pools all drain in parallel, so the player can end up with vexes and
+		// killer bunnies side-by-side. We don't apply the per-mob-type cap here; the cap is
+		// re-evaluated at drain time using the player's current frac, so a cap-shrink that
+		// happens while jobs are queued simply trims the overflow off the tail.
 
 		if (frac < 0.1F) {
-			spendPool(player, PENDING_VEX_DAMAGE_ULTRA_LIGHT, id, 0.3F, spawns -> spawnVexes(player, spawns, vexCap));
+			spendPool(player, PENDING_VEX_DAMAGE_ULTRA_LIGHT, id, 0.3F, spawns -> enqueueSpawn(player, SpawnType.VEX, spawns));
 		} else {
 			PENDING_VEX_DAMAGE_ULTRA_LIGHT.remove(id);
 		}
 
 		if (frac < 0.2F) {
-			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 0.7F, spawns -> spawnVexes(player, spawns, vexCap));
+			spendPool(player, PENDING_VEX_DAMAGE_LIGHT, id, 0.7F, spawns -> enqueueSpawn(player, SpawnType.VEX, spawns));
 		} else {
 			PENDING_VEX_DAMAGE_LIGHT.remove(id);
 		}
 
 		if (frac < 0.3F) {
-			spendPool(player, PENDING_VEX_DAMAGE, id, 1.5F, spawns -> spawnVexes(player, spawns, vexCap));
+			spendPool(player, PENDING_VEX_DAMAGE, id, 1.5F, spawns -> enqueueSpawn(player, SpawnType.VEX, spawns));
 		} else {
 			PENDING_VEX_DAMAGE.remove(id);
 		}
 
 		if (frac < 0.3F) {
-			spendPool(player, PENDING_BUNNY_DAMAGE_LIGHT, id, 1.5F, spawns -> spawnKillerBunnies(player, spawns, bunnyCap));
+			spendPool(player, PENDING_BUNNY_DAMAGE_LIGHT, id, 1.5F, spawns -> enqueueSpawn(player, SpawnType.BUNNY, spawns));
 		} else {
 			PENDING_BUNNY_DAMAGE_LIGHT.remove(id);
 		}
 
 		if (frac < 0.4F) {
-			spendPool(player, PENDING_BUNNY_DAMAGE, id, 2.0F, spawns -> spawnKillerBunnies(player, spawns, bunnyCap));
+			spendPool(player, PENDING_BUNNY_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.BUNNY, spawns));
 		} else {
 			PENDING_BUNNY_DAMAGE.remove(id);
 		}
 
 		if (frac < 0.5F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE_FOUR, id, 4.0F, spawns -> spawnZombies(player, spawns * 2, zombieCap));
+			// 4 hp buys two zombies; the pool's spend count is in "4 hp units", and enqueue
+			// expects head count, so we multiply.
+			spendPool(player, PENDING_ZOMBIE_DAMAGE_FOUR, id, 4.0F, spawns -> enqueueSpawn(player, SpawnType.ZOMBIE, spawns * 2));
 		} else {
 			PENDING_ZOMBIE_DAMAGE_FOUR.remove(id);
 		}
@@ -318,16 +354,16 @@ public final class EndRingSummons {
 		// the frac < 0.6 else-branch would wipe the pool the moment the player crossed 0.6 and
 		// the higher tiers would never fire.
 		if (frac < 0.6F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 4.0F, spawns -> spawnZombies(player, spawns, zombieCap));
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 4.0F, spawns -> enqueueSpawn(player, SpawnType.ZOMBIE, spawns));
 		}
 		if (frac < 0.7F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 8.0F, spawns -> spawnZombies(player, spawns, zombieCap));
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 8.0F, spawns -> enqueueSpawn(player, SpawnType.ZOMBIE, spawns));
 		}
 		if (frac < 0.8F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 12.0F, spawns -> spawnZombies(player, spawns, zombieCap));
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 12.0F, spawns -> enqueueSpawn(player, SpawnType.ZOMBIE, spawns));
 		}
 		if (frac < 0.9F) {
-			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 16.0F, spawns -> spawnZombies(player, spawns, zombieCap));
+			spendPool(player, PENDING_ZOMBIE_DAMAGE, id, 16.0F, spawns -> enqueueSpawn(player, SpawnType.ZOMBIE, spawns));
 		}
 		if (frac >= 0.9F) {
 			PENDING_ZOMBIE_DAMAGE.remove(id);
@@ -356,15 +392,14 @@ public final class EndRingSummons {
 		return 0;
 	}
 
-	private static void spendPool(ServerPlayer player, Map<UUID, Float> pool, UUID id, float costPerSpawn, java.util.function.IntFunction<Boolean> spawnFn) {
+	private static void spendPool(ServerPlayer player, Map<UUID, Float> pool, UUID id, float costPerSpawn, java.util.function.IntConsumer spawnFn) {
 		float current = pool.getOrDefault(id, 0.0F);
 		if (current < costPerSpawn) {
 			return;
 		}
 		int spawns = (int) (current / costPerSpawn);
-		if (spawnFn.apply(spawns)) {
-			pool.put(id, current - spawns * costPerSpawn);
-		}
+		spawnFn.accept(spawns);
+		pool.put(id, current - spawns * costPerSpawn);
 	}
 
 	private static void clearAll(ServerPlayer player) {
@@ -393,6 +428,7 @@ public final class EndRingSummons {
 		VEX_AUTO_TIMER.remove(id);
 		LAST_HURT_ENTITY.remove(id);
 		PLAYER_ATTACK_TARGET.remove(id);
+		PENDING_SPAWNS.remove(id);
 	}
 
 	private static void prune(ServerPlayer player) {
@@ -430,74 +466,136 @@ public final class EndRingSummons {
 	// Spawn helpers
 	// -----------------------------------------------------------------------
 
-	private static boolean spawnVexes(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.VEX, Vex.class, count, cap, EndRingSummons::configureVex, VEX_POLICY);
-	}
-
-	private static boolean spawnKillerBunnies(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.RABBIT, Rabbit.class, count, cap, (level, mob) -> {
-			// setVariant is private in vanilla; the accessor mixin exposes it. The EVIL variant
-			// installs MeleeAttackGoal + HurtByTargetGoal + NearestAttackableTargetGoal<Player/Wolf>
-			// in its setVariant method, so the rabbit actually fights back. The targeting mixin
-			// then blocks the auto-acquired Player target.
-			((RabbitVariantAccessor) mob).endring$setVariant(Rabbit.Variant.EVIL);
-		}, RABBIT_POLICY);
-	}
-
-	private static boolean spawnZombies(ServerPlayer player, int count, int cap) {
-		return spawn(player, EntityTypes.ZOMBIE, Zombie.class, count, cap, (level, mob) -> {
-		}, ZOMBIE_POLICY);
-	}
-
-	// Vexes fly, so the "is there a solid floor under their feet" check is irrelevant - they hover
-	// independently of the block below. We only need feet+head to not be jammed by a solid.
+	// Per-mob-type spawn policy. Vexes fly (no solid floor needed, no head check); rabbits are
+	// 0.5 blocks tall (one-block clearance is enough); zombies need a solid floor and 2-block
+	// clearance.
 	private static final SpawnPolicy VEX_POLICY = new SpawnPolicy(false, false);
-	// Rabbits are 0.5 blocks tall and have a small hitbox; they fit anywhere a 1-block-tall pocket
-	// has air at foot level and a solid below. The head clearance check is unnecessary.
 	private static final SpawnPolicy RABBIT_POLICY = new SpawnPolicy(true, true);
-	// Zombies are 1.95 blocks tall and need the full 2-block clearance plus a solid floor.
 	private static final SpawnPolicy ZOMBIE_POLICY = new SpawnPolicy(true, false);
-
-	@FunctionalInterface
-	private interface MobConfigurator {
-		void configure(ServerLevel level, Mob mob);
-	}
 
 	private record SpawnPolicy(boolean needsSolidFloor, boolean oneBlockTall) {
 	}
 
-	private static <T extends Mob> boolean spawn(ServerPlayer player, EntityType<T> type, Class<T> typeClass, int count, int typeCap, MobConfigurator config, SpawnPolicy policy) {
+	/**
+	 * Push a spawn request onto the player's queue instead of generating the entity right away.
+	 * Multiple jobs for the same type are coalesced so a hit that triggers several pools at once
+	 * still leaves the queue compact. The cap is re-evaluated at drain time - see
+	 * {@link #drainPendingSpawns}.
+	 */
+	private static void enqueueSpawn(ServerPlayer player, SpawnType type, int count) {
 		if (count <= 0) {
-			return true;
+			return;
 		}
-		ServerLevel level = player.level();
-		List<LivingEntity> list = SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>());
-		list.removeIf(e -> !LOADED.test(e));
-		int ofType = 0;
-		for (LivingEntity e : list) {
-			if (typeClass.isInstance(e)) {
-				ofType++;
+		Deque<SpawnJob> queue = PENDING_SPAWNS.computeIfAbsent(player.getUUID(), k -> new ArrayDeque<>());
+		// Coalesce with the tail job of the same type so a single big hit that fires multiple
+		// pools in one tick doesn't grow the queue linearly with pool count.
+		SpawnJob tail = queue.peekLast();
+		if (tail != null && tail.type == type) {
+			tail.remaining += count;
+		} else {
+			queue.addLast(new SpawnJob(type, count));
+		}
+	}
+
+	/**
+	 * Flush up to {@link #PER_TICK_BUDGET} entities from the player's queue. Each pop decrements
+	 * the job by 1; the job is removed when it hits 0. The cap check uses the player's current
+	 * frac, so a cap-shrink while jobs are queued silently trims the overflow.
+	 */
+	private static void drainPendingSpawns(ServerPlayer player, float frac) {
+		Deque<SpawnJob> queue = PENDING_SPAWNS.get(player.getUUID());
+		if (queue == null || queue.isEmpty()) {
+			return;
+		}
+		int budget = PER_TICK_BUDGET;
+		while (budget > 0 && !queue.isEmpty()) {
+			SpawnJob job = queue.peekFirst();
+			if (job == null) {
+				break;
 			}
-		}
-		int free = typeCap - ofType;
-		if (free <= 0) {
-			return false;
-		}
-		int toSpawn = Math.min(count, free);
-		BlockPos pos = player.blockPosition();
-		for (int i = 0; i < toSpawn; i++) {
-			BlockPos spawnAt = findSafeSpawn(level, pos, policy);
-			T mob = type.spawn(level, spawnAt.immutable(), EntitySpawnReason.MOB_SUMMONED);
-			if (mob == null) {
+			int cap = currentCapFor(job.type, frac);
+			if (cap <= 0) {
+				queue.removeFirst();
 				continue;
 			}
-			config.configure(level, mob);
-			// Tag the mob with the owner UUID. From the next aiStep onwards the targeting and
-			// follow mixins in mixin/ take over - no goal selector rewriting is done.
-			EndRingOwnedComponent.setOwner(mob, player);
-			list.add(mob);
+			// Cap accounting uses the same SUMMONED list we already maintain. We re-count from
+			// scratch each iteration because the spawn itself appends to the list and would
+			// otherwise let one budget slice through the cap.
+			List<LivingEntity> list = SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>());
+			list.removeIf(e -> !LOADED.test(e));
+			int ofType = 0;
+			for (LivingEntity e : list) {
+				if (job.type.typeClass.isInstance(e)) {
+					ofType++;
+				}
+			}
+			if (ofType >= cap) {
+				queue.removeFirst();
+				continue;
+			}
+			if (spawnOne(player, job.type)) {
+				job.remaining--;
+				if (job.remaining <= 0) {
+					queue.removeFirst();
+				}
+				budget--;
+			} else {
+				// Spawn failed (no safe pocket AND the player-position fallback collided).
+				// Drop the job so we don't spin on it forever; pool residue stays spent.
+				queue.removeFirst();
+			}
 		}
+	}
+
+	private static int currentCapFor(SpawnType type, float frac) {
+		return switch (type) {
+			case VEX -> capForFrac(VEX_CAPS, VEX_CAPS_VALUES, frac);
+			case BUNNY -> capForFrac(BUNNY_CAPS, BUNNY_CAPS_VALUES, frac);
+			case ZOMBIE -> capForFrac(ZOMBIE_CAPS, ZOMBIE_CAPS_VALUES, frac);
+		};
+	}
+
+	/**
+	 * Generate exactly one entity of the given type, attaching the owner marker. Returns
+	 * {@code false} if the entity factory or the type-specific configurator rejects the call
+	 * (extremely rare - configurators are inlined here for the three summonable types).
+	 */
+	private static boolean spawnOne(ServerPlayer player, SpawnType type) {
+		ServerLevel level = player.level();
+		BlockPos at = findSafeSpawn(level, player.blockPosition(), type.policy);
+		Mob mob = type.entityType.spawn(level, at.immutable(), EntitySpawnReason.MOB_SUMMONED);
+		if (mob == null) {
+			return false;
+		}
+		configureByType(mob, type);
+		// Tag the mob with the owner UUID. From the next aiStep onwards the targeting and
+		// follow mixins in mixin/ take over - no goal selector rewriting is done.
+		EndRingOwnedComponent.setOwner(mob, player);
+		SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>()).add(mob);
 		return true;
+	}
+
+	private static void configureByType(Mob mob, SpawnType type) {
+		switch (type) {
+			case VEX -> {
+				if (mob instanceof Vex vex) {
+					// setLimitedLife matches vanilla spell-summoned vexes: ~30s before the vex
+					// starves itself.
+					vex.setLimitedLife(20 * 30);
+				}
+			}
+			case BUNNY -> {
+				// setVariant is private in vanilla; the accessor mixin exposes it. The EVIL
+				// variant installs MeleeAttackGoal + HurtByTargetGoal +
+				// NearestAttackableTargetGoal<Player/Wolf> in its setVariant method, so the
+				// rabbit actually fights back. The targeting mixin then blocks the auto-acquired
+				// Player target.
+				((RabbitVariantAccessor) mob).endring$setVariant(Rabbit.Variant.EVIL);
+			}
+			case ZOMBIE -> {
+				// no extra config: vanilla zombie is fine.
+			}
+		}
 	}
 
 	/**
