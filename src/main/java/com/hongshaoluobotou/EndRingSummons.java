@@ -18,7 +18,13 @@ import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.rabbit.Rabbit;
+import net.minecraft.world.entity.monster.Ravager;
+import net.minecraft.world.entity.monster.Silverfish;
 import net.minecraft.world.entity.monster.Vex;
+import net.minecraft.world.entity.monster.Witch;
+import net.minecraft.world.entity.monster.illager.Pillager;
+import net.minecraft.world.entity.monster.skeleton.Skeleton;
+import net.minecraft.world.entity.monster.skeleton.WitherSkeleton;
 import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.item.ItemStack;
 
@@ -62,6 +68,24 @@ public final class EndRingSummons {
 	private static final Map<UUID, Float> PENDING_BUNNY_DAMAGE = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_ZOMBIE_DAMAGE_FOUR = new HashMap<>();
 	private static final Map<UUID, Float> PENDING_ZOMBIE_DAMAGE = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_SILVERFISH_DAMAGE_ULTRA_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_SILVERFISH_DAMAGE_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_SILVERFISH_DAMAGE = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_SKELETON_DAMAGE_ULTRA_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_SKELETON_DAMAGE_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_SKELETON_DAMAGE = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_WITCH_DAMAGE_ULTRA_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_WITCH_DAMAGE_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_WITCH_DAMAGE = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_PILLAGER_DAMAGE_ULTRA_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_PILLAGER_DAMAGE_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_PILLAGER_DAMAGE = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_RAVAGER_DAMAGE_ULTRA_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_RAVAGER_DAMAGE_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_RAVAGER_DAMAGE = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_WITHER_SKELETON_DAMAGE_ULTRA_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_WITHER_SKELETON_DAMAGE_LIGHT = new HashMap<>();
+	private static final Map<UUID, Float> PENDING_WITHER_SKELETON_DAMAGE = new HashMap<>();
 
 	// Auto-summon timer for the < 0.1 vex tier.
 	private static final Map<UUID, Integer> VEX_AUTO_TIMER = new HashMap<>();
@@ -109,7 +133,13 @@ public final class EndRingSummons {
 	private enum SpawnType {
 		VEX(EntityTypes.VEX, Vex.class),
 		BUNNY(EntityTypes.RABBIT, Rabbit.class),
-		ZOMBIE(EntityTypes.ZOMBIE, Zombie.class);
+		ZOMBIE(EntityTypes.ZOMBIE, Zombie.class),
+		SILVERFISH(EntityTypes.SILVERFISH, Silverfish.class),
+		SKELETON(EntityTypes.SKELETON, Skeleton.class),
+		WITCH(EntityTypes.WITCH, Witch.class),
+		PILLAGER(EntityTypes.PILLAGER, Pillager.class),
+		RAVAGER(EntityTypes.RAVAGER, Ravager.class),
+		WITHER_SKELETON(EntityTypes.WITHER_SKELETON, WitherSkeleton.class);
 
 		final EntityType<? extends Mob> entityType;
 		final Class<? extends Mob> typeClass;
@@ -181,6 +211,24 @@ public final class EndRingSummons {
 		PENDING_BUNNY_DAMAGE.merge(id, damageTaken, Float::sum);
 		PENDING_ZOMBIE_DAMAGE_FOUR.merge(id, damageTaken, Float::sum);
 		PENDING_ZOMBIE_DAMAGE.merge(id, damageTaken, Float::sum);
+		PENDING_SILVERFISH_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_SILVERFISH_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_SILVERFISH_DAMAGE.merge(id, damageTaken, Float::sum);
+		PENDING_SKELETON_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_SKELETON_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_SKELETON_DAMAGE.merge(id, damageTaken, Float::sum);
+		PENDING_WITCH_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_WITCH_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_WITCH_DAMAGE.merge(id, damageTaken, Float::sum);
+		PENDING_PILLAGER_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_PILLAGER_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_PILLAGER_DAMAGE.merge(id, damageTaken, Float::sum);
+		PENDING_RAVAGER_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_RAVAGER_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_RAVAGER_DAMAGE.merge(id, damageTaken, Float::sum);
+		PENDING_WITHER_SKELETON_DAMAGE_ULTRA_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_WITHER_SKELETON_DAMAGE_LIGHT.merge(id, damageTaken, Float::sum);
+		PENDING_WITHER_SKELETON_DAMAGE.merge(id, damageTaken, Float::sum);
 	}
 
 	/** Ring-removed cleanup: despawn every mob the ring spawned. */
@@ -366,6 +414,114 @@ public final class EndRingSummons {
 		if (frac >= 0.9F) {
 			PENDING_ZOMBIE_DAMAGE.remove(id);
 		}
+
+		if (frac < 0.1F) {
+			spendPool(player, PENDING_SILVERFISH_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> enqueueSpawn(player, SpawnType.SILVERFISH, spawns));
+		} else {
+			PENDING_SILVERFISH_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_SILVERFISH_DAMAGE_LIGHT, id, 1.0F, spawns -> enqueueSpawn(player, SpawnType.SILVERFISH, spawns));
+		} else {
+			PENDING_SILVERFISH_DAMAGE_LIGHT.remove(id);
+		}
+
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_SILVERFISH_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.SILVERFISH, spawns));
+		} else {
+			PENDING_SILVERFISH_DAMAGE.remove(id);
+		}
+
+		if (frac < 0.1F) {
+			spendPool(player, PENDING_SKELETON_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> enqueueSpawn(player, SpawnType.SKELETON, spawns));
+		} else {
+			PENDING_SKELETON_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_SKELETON_DAMAGE_LIGHT, id, 1.0F, spawns -> enqueueSpawn(player, SpawnType.SKELETON, spawns));
+		} else {
+			PENDING_SKELETON_DAMAGE_LIGHT.remove(id);
+		}
+
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_SKELETON_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.SKELETON, spawns));
+		} else {
+			PENDING_SKELETON_DAMAGE.remove(id);
+		}
+
+		if (frac < 0.1F) {
+			spendPool(player, PENDING_WITCH_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> enqueueSpawn(player, SpawnType.WITCH, spawns));
+		} else {
+			PENDING_WITCH_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_WITCH_DAMAGE_LIGHT, id, 1.0F, spawns -> enqueueSpawn(player, SpawnType.WITCH, spawns));
+		} else {
+			PENDING_WITCH_DAMAGE_LIGHT.remove(id);
+		}
+
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_WITCH_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.WITCH, spawns));
+		} else {
+			PENDING_WITCH_DAMAGE.remove(id);
+		}
+
+		if (frac < 0.1F) {
+			spendPool(player, PENDING_PILLAGER_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> enqueueSpawn(player, SpawnType.PILLAGER, spawns));
+		} else {
+			PENDING_PILLAGER_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_PILLAGER_DAMAGE_LIGHT, id, 1.0F, spawns -> enqueueSpawn(player, SpawnType.PILLAGER, spawns));
+		} else {
+			PENDING_PILLAGER_DAMAGE_LIGHT.remove(id);
+		}
+
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_PILLAGER_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.PILLAGER, spawns));
+		} else {
+			PENDING_PILLAGER_DAMAGE.remove(id);
+		}
+
+		if (frac < 0.1F) {
+			spendPool(player, PENDING_RAVAGER_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> enqueueSpawn(player, SpawnType.RAVAGER, spawns));
+		} else {
+			PENDING_RAVAGER_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_RAVAGER_DAMAGE_LIGHT, id, 1.0F, spawns -> enqueueSpawn(player, SpawnType.RAVAGER, spawns));
+		} else {
+			PENDING_RAVAGER_DAMAGE_LIGHT.remove(id);
+		}
+
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_RAVAGER_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.RAVAGER, spawns));
+		} else {
+			PENDING_RAVAGER_DAMAGE.remove(id);
+		}
+
+		if (frac < 0.1F) {
+			spendPool(player, PENDING_WITHER_SKELETON_DAMAGE_ULTRA_LIGHT, id, 0.5F, spawns -> enqueueSpawn(player, SpawnType.WITHER_SKELETON, spawns));
+		} else {
+			PENDING_WITHER_SKELETON_DAMAGE_ULTRA_LIGHT.remove(id);
+		}
+
+		if (frac < 0.2F) {
+			spendPool(player, PENDING_WITHER_SKELETON_DAMAGE_LIGHT, id, 1.0F, spawns -> enqueueSpawn(player, SpawnType.WITHER_SKELETON, spawns));
+		} else {
+			PENDING_WITHER_SKELETON_DAMAGE_LIGHT.remove(id);
+		}
+
+		if (frac < 0.3F) {
+			spendPool(player, PENDING_WITHER_SKELETON_DAMAGE, id, 2.0F, spawns -> enqueueSpawn(player, SpawnType.WITHER_SKELETON, spawns));
+		} else {
+			PENDING_WITHER_SKELETON_DAMAGE.remove(id);
+		}
 	}
 
 	/**
@@ -380,6 +536,18 @@ public final class EndRingSummons {
 	private static final int[] BUNNY_CAPS_VALUES = {45, 27, 9, 0};
 	private static final float[] ZOMBIE_CAPS = {0.5F, 0.6F, 0.8F, 1.0F};
 	private static final int[] ZOMBIE_CAPS_VALUES = {24, 12, 6, 0};
+	private static final float[] SILVERFISH_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] SILVERFISH_CAPS_VALUES = {30, 24, 18, 9, 0};
+	private static final float[] SKELETON_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] SKELETON_CAPS_VALUES = {24, 18, 12, 6, 0};
+	private static final float[] WITCH_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] WITCH_CAPS_VALUES = {18, 12, 9, 3, 0};
+	private static final float[] PILLAGER_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] PILLAGER_CAPS_VALUES = {12, 9, 6, 3, 0};
+	private static final float[] RAVAGER_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] RAVAGER_CAPS_VALUES = {6, 3, 1, 0, 0};
+	private static final float[] WITHER_SKELETON_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
+	private static final int[] WITHER_SKELETON_CAPS_VALUES = {12, 8, 4, 2, 0};
 
 	private static int capForFrac(float[] thresholds, int[] values, float frac) {
 		for (int i = 0; i < thresholds.length; i++) {
@@ -423,6 +591,24 @@ public final class EndRingSummons {
 		PENDING_BUNNY_DAMAGE.remove(id);
 		PENDING_ZOMBIE_DAMAGE_FOUR.remove(id);
 		PENDING_ZOMBIE_DAMAGE.remove(id);
+		PENDING_SILVERFISH_DAMAGE_ULTRA_LIGHT.remove(id);
+		PENDING_SILVERFISH_DAMAGE_LIGHT.remove(id);
+		PENDING_SILVERFISH_DAMAGE.remove(id);
+		PENDING_SKELETON_DAMAGE_ULTRA_LIGHT.remove(id);
+		PENDING_SKELETON_DAMAGE_LIGHT.remove(id);
+		PENDING_SKELETON_DAMAGE.remove(id);
+		PENDING_WITCH_DAMAGE_ULTRA_LIGHT.remove(id);
+		PENDING_WITCH_DAMAGE_LIGHT.remove(id);
+		PENDING_WITCH_DAMAGE.remove(id);
+		PENDING_PILLAGER_DAMAGE_ULTRA_LIGHT.remove(id);
+		PENDING_PILLAGER_DAMAGE_LIGHT.remove(id);
+		PENDING_PILLAGER_DAMAGE.remove(id);
+		PENDING_RAVAGER_DAMAGE_ULTRA_LIGHT.remove(id);
+		PENDING_RAVAGER_DAMAGE_LIGHT.remove(id);
+		PENDING_RAVAGER_DAMAGE.remove(id);
+		PENDING_WITHER_SKELETON_DAMAGE_ULTRA_LIGHT.remove(id);
+		PENDING_WITHER_SKELETON_DAMAGE_LIGHT.remove(id);
+		PENDING_WITHER_SKELETON_DAMAGE.remove(id);
 		VEX_AUTO_TIMER.remove(id);
 		LAST_HURT_ENTITY.remove(id);
 		PLAYER_ATTACK_TARGET.remove(id);
@@ -546,6 +732,12 @@ public final class EndRingSummons {
 			case VEX -> capForFrac(VEX_CAPS, VEX_CAPS_VALUES, frac);
 			case BUNNY -> capForFrac(BUNNY_CAPS, BUNNY_CAPS_VALUES, frac);
 			case ZOMBIE -> capForFrac(ZOMBIE_CAPS, ZOMBIE_CAPS_VALUES, frac);
+			case SILVERFISH -> capForFrac(SILVERFISH_CAPS, SILVERFISH_CAPS_VALUES, frac);
+			case SKELETON -> capForFrac(SKELETON_CAPS, SKELETON_CAPS_VALUES, frac);
+			case WITCH -> capForFrac(WITCH_CAPS, WITCH_CAPS_VALUES, frac);
+			case PILLAGER -> capForFrac(PILLAGER_CAPS, PILLAGER_CAPS_VALUES, frac);
+			case RAVAGER -> capForFrac(RAVAGER_CAPS, RAVAGER_CAPS_VALUES, frac);
+			case WITHER_SKELETON -> capForFrac(WITHER_SKELETON_CAPS, WITHER_SKELETON_CAPS_VALUES, frac);
 		};
 	}
 
@@ -577,6 +769,27 @@ public final class EndRingSummons {
 				// no extra config: vanilla Zombie.finalizeSpawn already randomised occupation,
 				// equipment, enchantments, knockback resistance, follow range, and reinforcement
 				// chance based on the local difficulty. We get all of that for free.
+			}
+			case SILVERFISH -> {
+				// vanilla Monster finalise path is a no-op for silverfish (no equipment).
+			}
+			case SKELETON -> {
+				// AbstractSkeleton.finalizeSpawn equips a Bow and runs reassessWeaponGoal() for
+				// us; nothing to override.
+			}
+			case WITCH -> {
+				// Witch has no held item by design; potions are constructed at fire time in
+				// performRangedAttack.
+			}
+			case PILLAGER -> {
+				// Pillager.finalizeSpawn equips a Crossbow and runs enchantment rolls for us.
+			}
+			case RAVAGER -> {
+				// Ravager is melee-only; no held items, vanilla default applies.
+			}
+			case WITHER_SKELETON -> {
+				// WitherSkeleton.finalizeSpawn equips a Stone Sword (overriding the
+				// AbstractSkeleton bow) and sets ATTACK_DAMAGE=4.0.
 			}
 		}
 	}
@@ -634,9 +847,9 @@ public final class EndRingSummons {
 		// 生成时给随机方向和速度
 		RandomSource random = level.getRandom();
 		mob.setDeltaMovement(
+			(random.nextFloat() - 0.5f) * 1.8f,
 			(random.nextFloat() - 0.5f) * 0.6f,
-			(random.nextFloat() - 0.5f) * 0.2f,
-			(random.nextFloat() - 0.5f) * 0.6f
+			(random.nextFloat() - 0.5f) * 1.8f
 		);
 		return true;
 	}
