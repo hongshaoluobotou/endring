@@ -15,11 +15,11 @@ public class EndRingItem extends Item {
 	static final int LORE_LINES = 5;
 
 	// Vanilla DAMAGE drives everything: the durability bar, Unbreaking, Mending, isDamaged — the same
-	// way they work for any tool. We just mirror totems into it: with maxDamage N the ring holds
-	// (N - 1) totems at fresh, and one point of damage is always kept in reserve so the bar keeps
-	// showing a sliver when totems run out. The ring never reaches its own maxDamage, which keeps it
-	// out of vanilla's break-and-shrink path. maxDamage is itself a vanilla DataComponent, so a
-	// {MaxDamage:100} NBT tag on the stack is honoured the same way as for any other item.
+	// way they work for any tool. We mirror totems into it one-to-one: a fresh ring has totems == maxDamage
+	// and damage == 0; consuming the last totem sets damage to maxDamage (the durability bar is empty
+	// but the stack does not break — ItemStackNeverBreakMixin cancels the shrink path in applyDamage
+	// when the stack is a ring). maxDamage is itself a vanilla DataComponent, so a {MaxDamage:N} NBT tag
+	// on the stack is honoured the same way as for any other item.
 	public static final int MAX_DAMAGE = 9;
 
 	public EndRingItem(Properties properties) {
@@ -94,7 +94,7 @@ public class EndRingItem extends Item {
 	}
 
 	public static int maxTotems(ItemStack ring) {
-		return Math.max(0, getMaxDamage(ring) - 1);
+		return Math.max(0, getMaxDamage(ring));
 	}
 
 	public static int getTotems(ItemStack ring) {
@@ -109,20 +109,21 @@ public class EndRingItem extends Item {
 
 	// Consume one totem for a fatal hit, honouring the Unbreaking enchantment: Unbreaking is given a
 	// chance to spare the totem entirely (the same way vanilla tools gain durability). Returns true when
-	// a totem was actually spent. The ring never breaks: damage is clamped below maxDamage.
+	// a totem was actually spent. The ring is allowed to reach maxDamage (empty durability bar) but
+	// never breaks: ItemStackNeverBreakMixin cancels the shrink branch in ItemStack.applyDamage for
+	// ring stacks, so going through vanilla's hurt path is safe; consumeTotem itself uses a direct
+	// setDamageValue which is also shrink-free.
 	public static boolean consumeTotem(ServerPlayer player, ItemStack ring) {
 		if (getTotems(ring) <= 0) {
 			return false;
 		}
-		// Run the Unbreaking pass the same way vanilla tools do, then write the new damage directly. A
-		// direct setDamageValue cannot shrink the stack (ItemStack only shrinks inside applyDamage), so
-		// the ring is safe at the upper end even though we momentarily reach maxDamage on paper.
+		// Run the Unbreaking pass the same way vanilla tools do, then write the new damage directly.
 		int cost = net.minecraft.world.item.enchantment.EnchantmentHelper.processDurabilityChange(player.level(), ring, 1);
 		if (cost <= 0) {
 			return true;
 		}
 		int maxDamage = getMaxDamage(ring);
-		ring.setDamageValue(Math.min(ring.getDamageValue() + cost, maxDamage - 1));
+		ring.setDamageValue(Math.min(ring.getDamageValue() + cost, maxDamage));
 		return true;
 	}
 

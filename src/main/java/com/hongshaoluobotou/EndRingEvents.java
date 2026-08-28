@@ -23,7 +23,6 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 
 public final class EndRingEvents {
@@ -131,6 +130,11 @@ public final class EndRingEvents {
 			TOTEM_REGEN.remove(id);
 			return;
 		}
+		float maxHealth = player.getMaxHealth();
+		if (maxHealth <= 0.0F || player.getHealth() / maxHealth <= 0.8F) {
+			TOTEM_REGEN.put(id, 0);
+			return;
+		}
 		int progress = TOTEM_REGEN.getOrDefault(id, 0) + 1;
 		if (progress >= EndRingItem.TOTEM_REGEN_TICKS) {
 			EndRingItem.setTotems(ring, EndRingItem.getTotems(ring) + 1);
@@ -144,7 +148,7 @@ public final class EndRingEvents {
 		float health = player.getHealth();
 		Float previous = LAST_HEALTH.put(player.getUUID(), health);
 		if (previous != null && previous - health > 1.0F && player.isAlive()) {
-			player.level().playSound(null, player.blockPosition(), SoundEvents.ENDER_DRAGON_HURT, SoundSource.PLAYERS, 5.0F, 1.0F);
+			player.level().playSound(null, player.blockPosition(), SoundEvents.WITHER_HURT, SoundSource.PLAYERS, ( previous - health ) * 5.0F, 1.0F);
 		}
 	}
 
@@ -168,7 +172,7 @@ public final class EndRingEvents {
 			player.removeEffect(MobEffects.CONDUIT_POWER);
 		}
 
-		float frac = totemFraction(player);
+		float frac = remainDamagePercentage(player);
 		updateDynamicArmor(player, frac);
 
 		applyReach(player);
@@ -191,7 +195,7 @@ public final class EndRingEvents {
 	}
 
 	private static void onDamaged(ServerPlayer player) {
-		float frac = totemFraction(player);
+		float frac = remainDamagePercentage(player);
 
 		int resistanceAmp = resistanceAmplifier(frac);
 		if (resistanceAmp >= 0) {
@@ -199,22 +203,20 @@ public final class EndRingEvents {
 		}
 	}
 
-	// The lower the fraction of stored totems, the stronger the granted attributes/effects (a totem count
-	// of 0 yields fraction 0, full totems yields 1).
-	private static float totemFraction(ServerPlayer player) {
+	private static float remainDamagePercentage(ServerPlayer player) {
 		ItemStack ring = EndRingItem.getWorn(player);
 		int max = EndRingItem.maxTotems(ring);
 		return max <= 0 ? 0.0F : (float) EndRingItem.getTotems(ring) / max;
 	}
 
 	private static int resistanceAmplifier(float frac) {
-		if (frac < 0.20F) {
+		if (frac < 0.10F) {
 			return 3;
 		}
-		if (frac < 0.40F) {
+		if (frac < 0.20F) {
 			return 2;
 		}
-		if (frac < 0.60F) {
+		if (frac < 0.40F) {
 			return 1;
 		}
 		if (frac < 0.80F) {
@@ -225,10 +227,19 @@ public final class EndRingEvents {
 
 	// < 0.3: ensure Regen II (amp 1). < 0.6: ensure Regen I (amp 0). >= 0.6: leave regen alone.
 	private static int regenerationAmplifier(float frac) {
-		if (frac < 0.3F) {
-			return 1;
+		if (frac < 0.1F) {
+			return 5;
 		}
-		if (frac < 0.6F) {
+		if (frac < 0.3F) {
+			return 4;
+		}
+		if (frac < 0.5F) {
+			return 3;
+		}
+		if (frac < 0.7F) {
+			return 2;
+		}
+		if (frac < 0.9F) {
 			return 0;
 		}
 		return -1;
@@ -236,27 +247,30 @@ public final class EndRingEvents {
 
 	private static int strengthAmplifier(float frac) {
 		if (frac < 0.10F) {
-			return 127;
+			return 255;
 		}
 		if (frac < 0.20F) {
-			return 63;
+			return 127;
 		}
 		if (frac < 0.30F) {
-			return 31;
+			return 63;
 		}
 		if (frac < 0.40F) {
-			return 15;
+			return 31;
 		}
 		if (frac < 0.50F) {
-			return 7;
+			return 15;
 		}
 		if (frac < 0.60F) {
-			return 3;
+			return 7;
 		}
 		if (frac < 0.70F) {
-			return 1;
+			return 3;
 		}
 		if (frac < 0.80F) {
+			return 1;
+		}
+		if (frac < 0.90F) {
 			return 0;
 		}
 		return -1;
@@ -471,7 +485,7 @@ public final class EndRingEvents {
 	// One-shot absorption granted when a totem is consumed. Lasts a single totem's worth of time and is not
 	// refreshed every tick; the fewer totems left after the trigger, the stronger the shield.
 	public static void grantTotemAbsorption(ServerPlayer player) {
-		int amplifier = absorptionAmplifier(totemFraction(player));
+		int amplifier = absorptionAmplifier(remainDamagePercentage(player));
 		if (amplifier < 0) {
 			return;
 		}

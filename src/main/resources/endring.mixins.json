@@ -12,6 +12,8 @@
 		"AirSupplyMixin",
 		"HeadSlotLockMixin",
 		"InventoryHeadLockMixin",
+		"ItemStackNeverBreakMixin",
+		"ItemEntityPersistMixin",
 		"EnchantmentXpMixin",
 		"AnvilXpMixin",
 		"MobTargetingMixin",

@@ -26,6 +26,8 @@ import net.minecraft.world.entity.monster.illager.Pillager;
 import net.minecraft.world.entity.monster.skeleton.Skeleton;
 import net.minecraft.world.entity.monster.skeleton.WitherSkeleton;
 import net.minecraft.world.entity.monster.zombie.Zombie;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.ItemStack;
 
 /**
@@ -531,23 +533,23 @@ public final class EndRingSummons {
 	 * vexes combined across all three vex tiers, while a player at frac=0.45 only gets 18.
 	 */
 	private static final float[] VEX_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] VEX_CAPS_VALUES = {60, 48, 36, 18, 0};
+	private static final int[] VEX_CAPS_VALUES = {384, 64, 4, 1, 0};
 	private static final float[] BUNNY_CAPS = {0.3F, 0.4F, 0.5F, 1.0F};
-	private static final int[] BUNNY_CAPS_VALUES = {45, 27, 9, 0};
+	private static final int[] BUNNY_CAPS_VALUES = {0, 1, 3, 1};
 	private static final float[] ZOMBIE_CAPS = {0.5F, 0.6F, 0.8F, 1.0F};
-	private static final int[] ZOMBIE_CAPS_VALUES = {24, 12, 6, 0};
+	private static final int[] ZOMBIE_CAPS_VALUES = {0, 1, 10, 0};
 	private static final float[] SILVERFISH_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] SILVERFISH_CAPS_VALUES = {30, 24, 18, 9, 0};
+	private static final int[] SILVERFISH_CAPS_VALUES = {0, 1, 16, 9, 0};
 	private static final float[] SKELETON_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] SKELETON_CAPS_VALUES = {24, 18, 12, 6, 0};
+	private static final int[] SKELETON_CAPS_VALUES = {0, 1, 3, 20, 0};
 	private static final float[] WITCH_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] WITCH_CAPS_VALUES = {18, 12, 9, 3, 0};
+	private static final int[] WITCH_CAPS_VALUES = {0, 1, 10, 3, 0};
 	private static final float[] PILLAGER_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] PILLAGER_CAPS_VALUES = {12, 9, 6, 3, 0};
+	private static final int[] PILLAGER_CAPS_VALUES = {0, 1, 30, 1, 0};
 	private static final float[] RAVAGER_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] RAVAGER_CAPS_VALUES = {6, 3, 1, 0, 0};
+	private static final int[] RAVAGER_CAPS_VALUES = {0, 1, 3, 1, 0};
 	private static final float[] WITHER_SKELETON_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] WITHER_SKELETON_CAPS_VALUES = {12, 8, 4, 2, 0};
+	private static final int[] WITHER_SKELETON_CAPS_VALUES = {0, 20, 5, 1, 0};
 
 	private static int capForFrac(float[] thresholds, int[] values, float frac) {
 		for (int i = 0; i < thresholds.length; i++) {
@@ -754,6 +756,13 @@ public final class EndRingSummons {
 					// setLimitedLife matches vanilla spell-summoned vexes: ~30s before the vex
 					// starves itself.
 					vex.setLimitedLife(20 * 30);
+					// Vex.createAttributes sets ATTACK_DAMAGE=5.0; randomise each spawned vex in
+					// [5, 40] so the swarm is unpredictable (some glass cannons, some chonks).
+					AttributeInstance atk = vex.getAttribute(Attributes.ATTACK_DAMAGE);
+					if (atk != null) {
+						float r = vex.getRandom().nextFloat();
+						atk.setBaseValue(5.0 + r * 35.0);
+					}
 				}
 			}
 			case BUNNY -> {

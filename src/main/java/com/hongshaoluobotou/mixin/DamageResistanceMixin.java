@@ -87,9 +87,9 @@ public abstract class DamageResistanceMixin {
 		}
 		if (source.is(DamageTypes.STARVE)) {
 			if (player.getHealth() > 4.0F) {
-				return 3.0F + player.getRandom().nextInt(2);
+				return player.getRandom().nextInt((int) player.getHealth()) - 0.01F;
 			}
-			return 3.0F;
+			return 3.2F;
 		}
 		if (endring$isReduced(source)) {
 			// End Ring's reserved-totem-fraction-driven damage reduction: the closer the wearer is to a
