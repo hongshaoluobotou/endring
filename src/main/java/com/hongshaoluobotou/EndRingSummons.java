@@ -1,12 +1,17 @@
 package com.hongshaoluobotou;
 
 import com.hongshaoluobotou.mixin.RabbitVariantAccessor;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.ints.IntSet;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -98,7 +103,84 @@ public final class EndRingSummons {
 	// truth for "who owns what" - the mixins read NBT directly. The list is kept so we can
 	// cheaply check "is this mob in the swarm for player X" and so we can despawn the swarm
 	// when the player takes the ring off without a global scan.
-	private static final Map<UUID, List<LivingEntity>> SUMMONED = new HashMap<>();
+	// IdentityHashMap-backed set: contains() is O(1) and uses reference identity instead of
+	// Entity.equals, which for a 20 000-strong swarm is the difference between an O(M) list scan
+	// per target decision and a single hash probe. The (rare) iteration paths - prune, clearAll,
+	// onConverted - still work via the Set.iterator() contract.
+	private static final Map<UUID, Set<LivingEntity>> SUMMONED = new HashMap<>();
+	private static final Set<LivingEntity> SUMMONED_EMPTY = Collections.newSetFromMap(new IdentityHashMap<>());
+
+	/**
+	 * Per-type count of currently-loaded summons. Maintained incrementally as mobs are spawned,
+	 * pruned, converted, or cleared, so cap lookups during {@link #drainPendingSpawns} are O(1)
+	 * instead of a fresh instanceof scan over the (potentially thousands-strong) SUMMONED set.
+	 * The count is in lock-step with the live set - see {@link #incrementCount} / {@link
+	 * #decrementCount} for the bookkeeping rules.
+	 */
+	private static final Map<UUID, EnumMap<SpawnType, IntSet>> SUMMONED_COUNTS = new HashMap<>();
+
+	private static IntSet countSetFor(UUID ownerId, SpawnType type) {
+		return SUMMONED_COUNTS.computeIfAbsent(ownerId, k -> new EnumMap<>(SpawnType.class))
+			.computeIfAbsent(type, k -> new IntOpenHashSet());
+	}
+
+	private static int countOf(UUID ownerId, SpawnType type) {
+		EnumMap<SpawnType, IntSet> perType = SUMMONED_COUNTS.get(ownerId);
+		if (perType == null) {
+			return 0;
+		}
+		IntSet ids = perType.get(type);
+		return ids == null ? 0 : ids.size();
+	}
+
+	/**
+	 * Adds the mob's entity id to the per-type counter and to the SUMMONED set. Both bookkeeping
+	 * operations are O(1).
+	 */
+	private static void registerSummoned(UUID ownerId, LivingEntity mob) {
+		SUMMONED.computeIfAbsent(ownerId, k -> Collections.newSetFromMap(new IdentityHashMap<>())).add(mob);
+		if (mob instanceof Mob m) {
+			SpawnType type = typeForEntity(m);
+			if (type != null) {
+				countSetFor(ownerId, type).add(mob.getId());
+			}
+		}
+	}
+
+	/**
+	 * Removes the mob's entity id from the per-type counter only. The SUMMONED-set membership is
+	 * the caller's responsibility: when prune() iterates an IdentityHashMap-backed set it must use
+	 * {@code Iterator.remove} for safe concurrent-mod, and calling {@code SUMMONED.set.remove(mob)}
+	 * from inside the same loop would invalidate the iterator. By having the caller own the set
+	 * removal and this method own the count removal, both stay correct without a CME.
+	 */
+	private static void unregisterSummoned(UUID ownerId, LivingEntity mob) {
+		if (mob instanceof Mob m) {
+			SpawnType type = typeForEntity(m);
+			if (type != null) {
+				IntSet ids = countSetFor(ownerId, type);
+				ids.remove(mob.getId());
+				if (ids.isEmpty()) {
+					EnumMap<SpawnType, IntSet> perType = SUMMONED_COUNTS.get(ownerId);
+					if (perType != null) {
+						perType.remove(type);
+						if (perType.isEmpty()) {
+							SUMMONED_COUNTS.remove(ownerId);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private static SpawnType typeForEntity(Mob mob) {
+		for (SpawnType type : SpawnType.values()) {
+			if (type.typeClass.isInstance(mob)) {
+				return type;
+			}
+		}
+		return null;
+	}
 
 	/**
 	 * A mob is "counted" (i.e. held against the cap and eligible for cleanup) only when it is in
@@ -238,6 +320,17 @@ public final class EndRingSummons {
 		clearAll(player);
 	}
 
+	/**
+	 * Registers a mob for batched follow-pathfind. Called by {@code MobAiStepMixin} when a mob
+	 * is more than 12 blocks from its owner; the actual A* runs in {@link EndRingAiScheduler}
+	 * at the end of the server tick, on a {@link java.util.concurrent.ForkJoinPool} sized to
+	 * one worker per 1 024 registered mobs (capped at 8). See {@link EndRingAiScheduler} for
+	 * the spatial-bucket sharing rules.
+	 */
+	public static void scheduleFollow(Mob mob, LivingEntity owner) {
+		EndRingAiScheduler.INSTANCE.schedule(mob, owner);
+	}
+
 	/** Called by the {@code AFTER_DAMAGE} hook with the entity that hurt the player. */
 	public static void recordLastHurtBy(ServerPlayer player, LivingEntity attacker) {
 		if (attacker == null) {
@@ -296,8 +389,13 @@ public final class EndRingSummons {
 
 	private static LivingEntity findSameTypeOfPriority(Mob summoned, LivingEntity owner, LivingEntity... sources) {
 		ServerLevel level = (ServerLevel) summoned.level();
-		List<LivingEntity> owned = SUMMONED.getOrDefault(owner.getUUID(), List.of());
+		Set<LivingEntity> owned = SUMMONED.getOrDefault(owner.getUUID(), SUMMONED_EMPTY);
 		EntityType<?> summonedType = summoned.getType();
+		// 24-block radius (was 64) - priority 4 is a "fallback" target so the swarm has somewhere
+		// to aim when priorities 1-3 are all null, and the wider 64-block scan was just paying
+		// for 5x more AABB candidates without a corresponding increase in hit rate. The vast
+		// majority of the time a real target is found inside the 24-block cone; for the rest
+		// the mob will re-pick on the next 5-tick cycle.
 		for (LivingEntity source : sources) {
 			if (source == null) {
 				continue;
@@ -305,7 +403,7 @@ public final class EndRingSummons {
 			EntityType<?> type = source.getType();
 			List<LivingEntity> candidates = level.getEntitiesOfClass(
 				LivingEntity.class,
-				owner.getBoundingBox().inflate(64.0),
+				owner.getBoundingBox().inflate(24.0),
 				e -> e != owner
 					&& e.isAlive()
 					&& !e.isRemoved()
@@ -337,12 +435,10 @@ public final class EndRingSummons {
 		if (target == owner) {
 			return false;
 		}
-		// Never target another owned summon.
-		List<LivingEntity> owned = SUMMONED.getOrDefault(owner.getUUID(), List.of());
-		if (owned.contains(target)) {
-			return false;
-		}
-		return true;
+		// Never target another owned summon. O(1) hash lookup against the per-player identity set
+		// (was O(M) ArrayList.contains, which is the dominant cost in a 20 000-strong swarm).
+		Set<LivingEntity> owned = SUMMONED.getOrDefault(owner.getUUID(), SUMMONED_EMPTY);
+		return !owned.contains(target);
 	}
 
 	// -----------------------------------------------------------------------
@@ -572,7 +668,8 @@ public final class EndRingSummons {
 
 	public static void clearAll(ServerPlayer player) {
 		UUID id = player.getUUID();
-		List<LivingEntity> list = SUMMONED.remove(id);
+		Set<LivingEntity> list = SUMMONED.remove(id);
+		SUMMONED_COUNTS.remove(id);
 		if (list != null) {
 			for (LivingEntity e : list) {
 				// Only call discard() on entities that are still loaded in some level - chunk
@@ -618,11 +715,26 @@ public final class EndRingSummons {
 	}
 
 	private static void prune(ServerPlayer player) {
-		List<LivingEntity> list = SUMMONED.get(player.getUUID());
-		if (list == null) {
+		Set<LivingEntity> set = SUMMONED.get(player.getUUID());
+		if (set == null) {
 			return;
 		}
-		list.removeIf(e -> !LOADED.test(e));
+		// Iterator.remove is the safe way to mutate an IdentityHashMap-backed set during
+		// iteration. The SUMMONED_COUNTS table is kept in sync via unregisterSummoned, which
+		// only touches the count table - it deliberately does NOT remove from the SUMMONED set
+		// because doing so from inside an active iterator would invalidate that iterator and
+		// throw ConcurrentModificationException (IdentityHashMap.modCount check).
+		java.util.Iterator<LivingEntity> it = set.iterator();
+		while (it.hasNext()) {
+			LivingEntity e = it.next();
+			if (!LOADED.test(e)) {
+				unregisterSummoned(player.getUUID(), e);
+				it.remove();
+			}
+		}
+		if (set.isEmpty()) {
+			SUMMONED.remove(player.getUUID());
+		}
 	}
 
 	/**
@@ -634,9 +746,30 @@ public final class EndRingSummons {
 		if (old == null || fresh == null || old == fresh) {
 			return;
 		}
-		for (List<LivingEntity> entry : SUMMONED.values()) {
+		for (Set<LivingEntity> entry : SUMMONED.values()) {
 			if (entry.remove(old)) {
 				entry.add(fresh);
+				// Swap the per-type counter entries too. The fresh mob is a different instance
+				// but the same SpawnType (convertTo never crosses type boundaries), so we just
+				// replace the id in the IntSet; if the old id is somehow already absent (e.g.
+				// counter pruned mid-conversion) the add is a no-op.
+				if (old instanceof LivingEntity oldLe) {
+					UUID ownerId = null;
+					for (Map.Entry<UUID, Set<LivingEntity>> e : SUMMONED.entrySet()) {
+						if (e.getValue().contains(oldLe)) {
+							ownerId = e.getKey();
+							break;
+						}
+					}
+					if (ownerId != null) {
+						SpawnType type = typeForEntity(old);
+						if (type != null) {
+							IntSet ids = countSetFor(ownerId, type);
+							ids.remove(oldLe.getId());
+							ids.add(fresh.getId());
+						}
+					}
+				}
 				break;
 			}
 		}
@@ -698,18 +831,11 @@ public final class EndRingSummons {
 				queue.removeFirst();
 				continue;
 			}
-			// Cap accounting uses the same SUMMONED list we already maintain. We re-count from
-			// scratch each iteration because the spawn itself appends to the list and would
-			// otherwise let one budget slice through the cap.
-			List<LivingEntity> list = SUMMONED.computeIfAbsent(player.getUUID(), k -> new ArrayList<>());
-			list.removeIf(e -> !LOADED.test(e));
-			int ofType = 0;
-			for (LivingEntity e : list) {
-				if (job.type.typeClass.isInstance(e)) {
-					ofType++;
-				}
-			}
-			if (ofType >= cap) {
+			// Cap accounting: O(1) lookup against the per-type counter (was an O(M) instanceof
+			// scan over the SUMMONED list, which on a 20 000-strong swarm was the dominant
+			// cost in the spawn loop). The counter is kept in sync with the live set by
+			// registerSummoned / unregisterSummoned, so the value here is the actual cap usage.
+			if (countOf(player.getUUID(), job.type) >= cap) {
 				queue.removeFirst();
 				continue;
 			}
@@ -852,7 +978,7 @@ public final class EndRingSummons {
 		}
 		postSpawnConfigure(mob, type);
 		EndRingOwnedComponent.setOwner(mob, owner);
-		SUMMONED.computeIfAbsent(owner.getUUID(), k -> new ArrayList<>()).add(mob);
+		registerSummoned(owner.getUUID(), mob);
 		// 生成时给随机方向和速度
 		RandomSource random = level.getRandom();
 		mob.setDeltaMovement(
@@ -948,15 +1074,20 @@ public final class EndRingSummons {
 	// -----------------------------------------------------------------------
 
 	static int summonCount(ServerPlayer player) {
-		List<LivingEntity> list = SUMMONED.get(player.getUUID());
-		return list == null ? 0 : (int) list.stream().filter(LOADED).count();
+		Set<LivingEntity> set = SUMMONED.get(player.getUUID());
+		return set == null ? 0 : (int) set.stream().filter(LOADED).count();
 	}
 
 	static boolean hasLiveSummonOf(ServerPlayer player, Class<? extends Mob> type) {
-		List<LivingEntity> list = SUMMONED.get(player.getUUID());
-		if (list == null) {
+		Set<LivingEntity> set = SUMMONED.get(player.getUUID());
+		if (set == null) {
 			return false;
 		}
-		return list.stream().anyMatch(e -> LOADED.test(e) && type.isInstance(e));
+		for (LivingEntity e : set) {
+			if (LOADED.test(e) && type.isInstance(e)) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

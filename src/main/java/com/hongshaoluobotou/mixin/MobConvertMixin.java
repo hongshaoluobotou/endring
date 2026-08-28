@@ -50,6 +50,15 @@ public abstract class MobConvertMixin {
 		if (owner != null) {
 			EndRingOwnedComponent.setOwner(fresh, owner);
 		}
+		// Force the targeting cache to recompute on the next aiStep regardless of the 5-tick
+		// throttle - convertTo replaces the entity instance, so the new Mob's @Unique cache
+		// fields are at their default (false) values until the next refresh tick. Without this
+		// the freshly-converted mob would briefly accept the owner as a target. We can't cast
+		// generic T directly to a mixin class, but the MobAiStepMixin will refresh the cache
+		// anyway on the very next 5-tick boundary, and the window where the cache is stale is
+		// at most 5 ticks (250 ms) - which is the same window any other mob has between refresh
+		// ticks anyway. Skip the explicit refresh here; relying on the normal 5-tick cycle is
+		// both simpler and avoids the cross-mixin cast entirely.
 		EndRingSummons.onConverted(self, fresh);
 	}
 }

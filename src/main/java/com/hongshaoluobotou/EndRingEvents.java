@@ -60,7 +60,18 @@ public final class EndRingEvents {
 	public static void register() {
 		PayloadTypeRegistry.clientboundPlay().register(DeathAnimationPayload.TYPE, DeathAnimationPayload.CODEC);
 
-		ServerTickEvents.END_SERVER_TICK.register(server -> server.getPlayerList().getPlayers().forEach(EndRingEvents::tickPlayer));
+		ServerTickEvents.END_SERVER_TICK.register(server -> {
+			server.getPlayerList().getPlayers().forEach(EndRingEvents::tickPlayer);
+			// Drain the AI scheduler's queued follow-pathfind work after every player's
+			// tickPlayer pass. By this point every owned mob that needed a re-path this tick
+			// has been registered via EndRingSummons.scheduleFollow; the scheduler groups
+			// them into spatial buckets and runs the lead pathfind in parallel on a worker
+			// pool before applying the (possibly shared) result to each member on the main
+			// thread. The pathfind itself is the only sub-tick work that goes off-thread;
+			// the apply step stays on the server thread to keep Mob field mutations in one
+			// place.
+			EndRingAiScheduler.onEndServerTick();
+		});
 
 		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
 			ItemStack ring = EndRingItem.getWorn(oldPlayer);

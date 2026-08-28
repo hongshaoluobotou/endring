@@ -53,7 +53,8 @@ def haloTestOut = layout.buildDirectory.dir("halo-test")
 tasks.register("haloTestCompile", JavaCompile) {
 	source = files(
 		"src/client/java/com/hongshaoluobotou/client/HaloPhysics.java",
-		"src/test/java/com/hongshaoluobotou/client/HaloPhysicsTest.java"
+		"src/test/java/com/hongshaoluobotou/client/HaloPhysicsTest.java",
+		"src/test/java/com/hongshaoluobotou/EndRingAiSchedulerTest.java"
 	)
 	classpath = files()
 	destinationDirectory = haloTestOut
@@ -70,8 +71,17 @@ tasks.register("haloTest", JavaExec) {
 	mainClass = "com.hongshaoluobotou.client.HaloPhysicsTest"
 }
 
+tasks.register("aiSchedulerTest", JavaExec) {
+	group = "verification"
+	description = "Runs the standalone EndRingAiScheduler spatial-bucket / pool-sizing scenarios."
+	dependsOn "haloTestCompile"
+	classpath = files(haloTestOut)
+	mainClass = "com.hongshaoluobotou.EndRingAiSchedulerTest"
+}
+
 tasks.named("check") {
 	dependsOn "haloTest"
+	dependsOn "aiSchedulerTest"
 }
 
 // src/test holds a plain-main() harness (run via haloTest), not JUnit tests, so the default
@@ -79,6 +89,7 @@ tasks.named("check") {
 tasks.named("test") {
 	failOnNoDiscoveredTests = false
 	dependsOn "haloTest"
+	dependsOn "aiSchedulerTest"
 }
 
 java {
