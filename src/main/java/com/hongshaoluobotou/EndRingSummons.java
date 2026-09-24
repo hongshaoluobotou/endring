@@ -629,7 +629,7 @@ public final class EndRingSummons {
 	 * vexes combined across all three vex tiers, while a player at frac=0.45 only gets 18.
 	 */
 	private static final float[] VEX_CAPS = {0.1F, 0.2F, 0.3F, 0.5F, 1.0F};
-	private static final int[] VEX_CAPS_VALUES = {384, 64, 4, 1, 0};
+	private static final int[] VEX_CAPS_VALUES = {3840, 64, 4, 1, 0};
 	private static final float[] BUNNY_CAPS = {0.3F, 0.4F, 0.5F, 1.0F};
 	private static final int[] BUNNY_CAPS_VALUES = {0, 1, 3, 1};
 	private static final float[] ZOMBIE_CAPS = {0.5F, 0.6F, 0.8F, 1.0F};

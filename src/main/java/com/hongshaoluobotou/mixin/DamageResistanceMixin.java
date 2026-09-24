@@ -47,7 +47,7 @@ public abstract class DamageResistanceMixin {
 		// Slime-family attacks (slime, magma cube, sulfur cube) are allowed to skip i-frames so they can
 		// hit every tick. Everything else keeps vanilla i-frames untouched.
 		if (source.getEntity() instanceof AbstractCubeMob) {
-			player.invulnerableTime = 0;
+			player.setInvulnerableTime(0);
 			return;
 		}
 		// Random immunity applies only to ordinary damage. Sources that bypass i-frames (void, /kill,
@@ -56,7 +56,7 @@ public abstract class DamageResistanceMixin {
 		if (source.is(DamageTypeTags.BYPASSES_INVULNERABILITY) || source.is(DamageTypeTags.BYPASSES_COOLDOWN)) {
 			return;
 		}
-		if ((float) player.invulnerableTime > 10.0F) {
+		if ((float) player.getInvulnerableTime() > 10.0F) {
 			return;
 		}
 		// Random immunity: chance grows as health drops and as more hits pile up without a dodge. On a

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Fabric mod ("终末之环" / End Ring) for Minecraft 26.2. Single Gradle project, no submodules.
+Fabric mod ("终末之环" / End Ring) for Minecraft 26.3. Single Gradle project, no submodules.
 
 ## Build & verify
 - `./gradlew build` — compiles both source sets, runs data-gen, and validates mixins. This is the CI check (`.github/workflows/build.yml`); run it before finishing.

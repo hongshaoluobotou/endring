@@ -52,7 +52,7 @@ public final class DragonDeath {
 
 	private static void freeze(ServerPlayer player) {
 		player.setHealth(1.0F);
-		player.invulnerableTime = 20;
+		player.setInvulnerableTime(20);
 		player.hurtTime = 0;
 		player.setNoGravity(true);
 		player.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 10, 250, false, false, false));

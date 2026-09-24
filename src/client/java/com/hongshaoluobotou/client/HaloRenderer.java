@@ -9,6 +9,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.joml.Matrix4f;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -156,9 +157,13 @@ public final class HaloRenderer {
 
 			poseStack.pushPose();
 			poseStack.translate(px + ax, py + ay, pz + az);
-			poseStack.mulPose(Axis.XP.rotationDegrees(tiltX));
-			poseStack.mulPose(Axis.ZP.rotationDegrees(tiltZ));
-			poseStack.mulPose(Axis.YP.rotationDegrees(spin));
+			// 26.3 removed PoseStack.mulPose(Quaternionf); compose the three rotations into one
+			// matrix instead. JOML rotate() post-multiplies, so the product below is
+			// Rx * Rz * Ry - the same order as the old sequential mulPose calls.
+			poseStack.mulPose(new Matrix4f()
+					.rotation(Axis.XP.rotationDegrees(tiltX))
+					.rotate(Axis.ZP.rotationDegrees(tiltZ))
+					.rotate(Axis.YP.rotationDegrees(spin)));
 			poseStack.scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
 			poseStack.translate(0.0, -0.5, 0.0);
 			renderState.submit(poseStack, collector, FULL_BRIGHT, OverlayTexture.NO_OVERLAY, 0);
